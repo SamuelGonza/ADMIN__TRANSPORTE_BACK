@@ -248,18 +248,19 @@ export class SolicitudesService {
 
     /**
      * Aceptar solicitud pendiente del cliente
-     * El coordinador asigna vehículo, conductor y datos financieros
+     * El coordinador asigna vehículo mediante PLACA y automáticamente se asigna el conductor
      */
     public async accept_solicitud({
         solicitud_id,
+        company_id,
         payload
     }: {
         solicitud_id: string,
+        company_id?: string,
         payload: {
             he: string,
             empresa: "travel" | "national",
-            vehiculo_id: string,
-            conductor_id: string,
+            placa: string, // Ahora se usa placa en lugar de vehiculo_id
             nombre_cuenta_cobro: string,
             valor_cancelado: number,
             valor_a_facturar: number,
@@ -275,26 +276,30 @@ export class SolicitudesService {
                 throw new ResponseError(400, "Solo se pueden aceptar solicitudes pendientes");
             }
 
-            // Obtener información del vehículo
-            const vehicle = await SolicitudesService.VehicleServices.get_vehicle_by_id({ id: payload.vehiculo_id });
-            if (!vehicle) throw new ResponseError(404, "Vehículo no encontrado");
+            // Buscar vehículo por placa - automáticamente trae conductor y propietario
+            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                placa: payload.placa,
+                company_id 
+            });
 
-            // Obtener información del conductor
-            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: payload.conductor_id });
-            if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+            if (!vehicleData.conductor) {
+                throw new ResponseError(400, "El vehículo no tiene conductor asignado");
+            }
 
             // Actualizar la solicitud
             solicitud.status = "accepted";
             solicitud.he = payload.he;
             solicitud.empresa = payload.empresa;
 
-            // Asignar vehículo y conductor
-            solicitud.vehiculo_id = payload.vehiculo_id as any;
-            solicitud.placa = vehicle.placa;
-            solicitud.tipo_vehiculo = vehicle.type;
-            solicitud.flota = vehicle.flota;
-            solicitud.conductor = payload.conductor_id as any;
-            solicitud.conductor_phone = conductor.contact?.phone || "";
+            // Asignar vehículo (automático desde la placa)
+            solicitud.vehiculo_id = vehicleData.vehicle._id as any;
+            solicitud.placa = vehicleData.vehicle.placa;
+            solicitud.tipo_vehiculo = vehicleData.vehicle.type;
+            solicitud.flota = vehicleData.vehicle.flota;
+
+            // Asignar conductor (automático desde el vehículo)
+            solicitud.conductor = vehicleData.conductor._id as any;
+            solicitud.conductor_phone = vehicleData.conductor.phone || "";
 
             // Asignar datos financieros
             solicitud.nombre_cuenta_cobro = payload.nombre_cuenta_cobro;
@@ -305,13 +310,39 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Devolver solicitud con información completa del vehículo y conductor
             return {
                 message: "Solicitud aceptada exitosamente",
-                solicitud
+                solicitud,
+                vehiculo: vehicleData.vehicle,
+                conductor: vehicleData.conductor,
+                propietario: vehicleData.propietario
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo aceptar la solicitud");
+        }
+    }
+
+    /**
+     * Buscar vehículo por placa para previsualizar información antes de aceptar
+     */
+    public async preview_vehicle_by_placa({
+        placa,
+        company_id
+    }: {
+        placa: string,
+        company_id?: string
+    }) {
+        try {
+            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                placa, 
+                company_id 
+            });
+            return vehicleData;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo obtener información del vehículo");
         }
     }
 

@@ -67,7 +67,13 @@ export class SolicitudesController {
         try {
             const { id } = req.params;
             const payload = req.body;
-            const response = await this.solicitudesService.accept_solicitud({ solicitud_id: id, payload });
+            const company_id = (req as AuthRequest).user?.company_id;
+            
+            const response = await this.solicitudesService.accept_solicitud({ 
+                solicitud_id: id, 
+                company_id,
+                payload 
+            });
             res.status(200).json({
                 message: "Solicitud aceptada correctamente",
                 data: response
@@ -83,6 +89,39 @@ export class SolicitudesController {
             res.status(500).json({
                 ok: false,
                 message: "Error al aceptar solicitud"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Previsualizar información del vehículo por placa
+     * Útil para mostrar al coordinador la info del conductor y propietario antes de aceptar
+     */
+    public async preview_vehicle_by_placa(req: Request, res: Response) {
+        try {
+            const { placa } = req.params;
+            const company_id = (req as AuthRequest).user?.company_id;
+            
+            const response = await this.solicitudesService.preview_vehicle_by_placa({ 
+                placa,
+                company_id 
+            });
+            res.status(200).json({
+                message: "Información del vehículo obtenida",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener información del vehículo"
             });
             return;
         }

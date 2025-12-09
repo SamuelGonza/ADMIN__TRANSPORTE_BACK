@@ -44,10 +44,13 @@ router.put("/:id/finish", ConductorAuth, solicitudesController.finish_service.bi
 
 // #========== RUTAS DE COORDINADOR ==========#
 
+// Previsualizar vehículo por placa (antes de asignar)
+router.get("/vehicle/preview/:placa", CoordinadorAuth, solicitudesController.preview_vehicle_by_placa.bind(solicitudesController));
+
 // Obtener solicitud por ID
 router.get("/:id", CoordinadorAuth, solicitudesController.get_solicitud_by_id.bind(solicitudesController));
 
-// Aceptar solicitud pendiente
+// Aceptar solicitud pendiente (ahora usa placa en lugar de vehiculo_id)
 router.put("/:id/accept", CoordinadorAuth, solicitudesController.accept_solicitud.bind(solicitudesController));
 
 // Rechazar solicitud pendiente

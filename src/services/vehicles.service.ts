@@ -602,6 +602,84 @@ export class VehicleServices {
         }
     }
 
+    /**
+     * Buscar vehículo por placa con toda la información del conductor y propietario
+     * Útil para asignar vehículos a solicitudes ingresando solo la placa
+     */
+    public async get_vehicle_by_placa({ placa, company_id }: { placa: string, company_id?: string }) {
+        try {
+            // Buscar vehículo por placa
+            const query: any = { placa: placa.toUpperCase().trim() };
+            
+            // Si se proporciona company_id, filtrar por vehículos de esa compañía
+            if (company_id) {
+                query['owner_id.company_id'] = company_id;
+            }
+
+            const vehicle = await vehicleModel
+                .findOne(query)
+                .populate({
+                    path: 'driver_id',
+                    select: 'full_name document contact email avatar role'
+                })
+                .populate({
+                    path: 'owner_id.company_id',
+                    select: 'company_name document logo'
+                })
+                .populate({
+                    path: 'owner_id.user_id',
+                    select: 'full_name document contact email'
+                })
+                .lean();
+
+            if (!vehicle) throw new ResponseError(404, "No se encontró vehículo con esa placa");
+
+            // Estructurar la respuesta con toda la información necesaria
+            const driver = vehicle.driver_id as any;
+            const ownerCompany = vehicle.owner_id?.company_id as any;
+            const ownerUser = vehicle.owner_id?.user_id as any;
+
+            return {
+                vehicle: {
+                    _id: vehicle._id,
+                    placa: vehicle.placa,
+                    name: vehicle.name,
+                    description: vehicle.description,
+                    seats: vehicle.seats,
+                    type: vehicle.type,
+                    flota: vehicle.flota,
+                    picture: vehicle.picture
+                },
+                conductor: driver ? {
+                    _id: driver._id,
+                    full_name: driver.full_name,
+                    document: driver.document,
+                    phone: driver.contact?.phone || '',
+                    email: driver.email || driver.contact?.email,
+                    avatar: driver.avatar
+                } : null,
+                propietario: {
+                    type: vehicle.owner_id?.type,
+                    company: ownerCompany ? {
+                        _id: ownerCompany._id,
+                        company_name: ownerCompany.company_name,
+                        document: ownerCompany.document,
+                        logo: ownerCompany.logo
+                    } : null,
+                    user: ownerUser ? {
+                        _id: ownerUser._id,
+                        full_name: ownerUser.full_name,
+                        document: ownerUser.document,
+                        phone: ownerUser.contact?.phone
+                    } : null
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo obtener el vehículo por placa");
+        }
+    }
+
     public async get_vehicle_documents({ vehicle_id }: { vehicle_id: string }) {
         try {
             const documents = await vhc_documentsModel

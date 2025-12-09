@@ -6,6 +6,7 @@ import { OperadorAuth } from "@/auth/operador.auth";
 import { SessionAuth } from "@/auth/session.auth";
 import { upload } from "@/middlewares/multer.middleware";
 import { SuperAdminAut } from "@/auth/superadmon.auth";
+import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 
 const router: Router = Router();
 const usersController = new UsersController();
@@ -30,7 +31,7 @@ router.post("/logout", SessionAuth, usersController.logout.bind(usersController)
 // #========== RUTAS PROTEGIDAS ==========#
 
 // Registro de usuarios (Admin puede crear usuarios en su empresa)
-router.post("/register", AdminAut, usersController.register_user.bind(usersController));
+router.post("/register", CoordinadorAuth, usersController.register_user.bind(usersController));
 
 // Subida de documentos de conductor
 router.post(
@@ -49,10 +50,10 @@ router.post(
 router.get("/", SuperAdminAut, usersController.get_all_users.bind(usersController));
 
 // Obtener usuarios de una compañía específica
-router.get("/company/:company_id", CoordinadorAuth, usersController.get_all_users_company.bind(usersController));
+router.get("/company/:company_id", ContabilidadAuth, usersController.get_all_users_company.bind(usersController));
 
 // Obtener usuario por ID
-router.get("/:id", CoordinadorAuth, usersController.get_user_by_id.bind(usersController));
+router.get("/:id", ContabilidadAuth, usersController.get_user_by_id.bind(usersController));
 
 // Actualizar información de usuario
 router.put("/:id", CoordinadorAuth, usersController.update_user_info.bind(usersController));
