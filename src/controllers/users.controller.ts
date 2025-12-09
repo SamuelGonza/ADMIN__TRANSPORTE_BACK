@@ -188,6 +188,7 @@ export class UsersController {
                 data: response
             });
         } catch (error) {
+            console.log(error);
             if(error instanceof ResponseError){
                 res.status(error.statusCode).json({
                     ok: false,

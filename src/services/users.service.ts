@@ -208,7 +208,7 @@ export class UserService {
         try {
             const find_user = await userModel.findOne({ email }).select("otp_recovery email");
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada")
-            if (!find_user.is_delete) throw new ResponseError(404, "Cuenta no disponible")
+            if (find_user.is_delete) throw new ResponseError(401, "Cuenta no disponible")
 
             if (otp_recovery != find_user.otp_recovery) throw new ResponseError(401, "Codigo invalido")
 
@@ -223,7 +223,7 @@ export class UserService {
         try {
             const find_user = await userModel.findOne({ email }).select("password");
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada")
-            if (!find_user.is_delete) throw new ResponseError(404, "Cuenta no disponible")
+            if (find_user.is_delete) throw new ResponseError(401, "Cuenta no disponible")
 
 
             const new_hashed_password = await hash_password(new_password)
@@ -239,12 +239,12 @@ export class UserService {
         try {
             const find_user = await userModel
                 .findOne({ email })
-                .select("full_name avatar role company_id password is_active")
-                .populate('company_id', 'company_name', 'logo');
+                .select("full_name avatar role company_id password is_active is_delete")
+                .populate('company_id', 'company_name logo');
 
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada")
             if (!find_user.is_active) throw new ResponseError(401, "Tu cuenta no esta activa. Contacta con un administrador")
-            if (!find_user.is_delete) throw new ResponseError(404, "Cuenta no disponible")
+            if (find_user.is_delete) throw new ResponseError(401, "Cuenta no disponible")
 
             const ok_password = await compare_password(password, find_user.password)
 
@@ -264,6 +264,7 @@ export class UserService {
                 }
             }
         } catch (error) {
+            console.log(error);
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo autenticar el ususario")
         }
@@ -434,7 +435,7 @@ export class UserService {
         try {
             const find_user = await userModel.findById(id);
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada")
-            if (!find_user.is_delete) throw new ResponseError(404, "Cuenta no disponible")
+            if (find_user.is_delete) throw new ResponseError(401, "Cuenta no disponible")
 
             find_user.full_name = full_name;
             find_user.contact = contact;
@@ -450,7 +451,7 @@ export class UserService {
         try {
             const find_user = await userModel.findById(id);
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada")
-            if (!find_user.is_delete) throw new ResponseError(404, "Cuenta no disponible")
+            if (find_user.is_delete) throw new ResponseError(401, "Cuenta no disponible")
 
             if (!new_avatar) throw new ResponseError(400, "Se requiere una imagen")
 
@@ -542,7 +543,7 @@ export class UserService {
         try {
             const find_user = await userModel.findById(id);
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada")
-            if (!find_user.is_delete) throw new ResponseError(404, "Cuenta no disponible")
+            if (find_user.is_delete) throw new ResponseError(401, "Cuenta no disponible")
 
             find_user.is_active = !find_user.is_active
             await find_user.save()
@@ -559,7 +560,7 @@ export class UserService {
         try {
             const find_user = await userModel.findById(user_id);
             if (!find_user) throw new ResponseError(404, "Cuenta no encontrada");
-            if (!find_user.is_delete) throw new ResponseError(404, "No se puede volver a eliminar.");
+            if (find_user.is_delete) throw new ResponseError(401, "No se puede volver a eliminar.");
 
             if (find_user.avatar.public_id) await delete_media([find_user.avatar.public_id])
 
