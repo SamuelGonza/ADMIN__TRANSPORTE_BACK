@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificación de Cuenta - Admin Transporte</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f4f4;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+        .header {
+            background-color: #1a1a1a;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .logo {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .greeting {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 20px;
+        }
+        .message {
+            font-size: 16px;
+            color: #555555;
+            margin-bottom: 30px;
+            line-height: 1.8;
+        }
+        .otp-box {
+            background-color: #f8f9fa;
+            border: 2px dashed #007bff;
+            padding: 30px;
+            margin: 30px 0;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .otp-label {
+            font-weight: 600;
+            color: #333333;
+            font-size: 14px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .otp-code {
+            font-size: 36px;
+            color: #007bff;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 5px;
+            margin: 10px 0;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #856404;
+        }
+        .footer {
+            background-color: #1a1a1a;
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+            font-size: 14px;
+        }
+        .footer-text {
+            margin-bottom: 10px;
+        }
+        .footer-link {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .footer-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <div class="logo">AdminTransporte</div>
+        </div>
+        
+        <div class="content">
+            <div class="greeting">¡Hola {{full_name}}!</div>
+            
+            <div class="message">
+                Bienvenido a <strong>Admin Transporte</strong>. Para completar el proceso de registro y activar tu cuenta, necesitamos verificar tu identidad.
+            </div>
+            
+            <div class="otp-box">
+                <div class="otp-label">Código de Verificación</div>
+                <div class="otp-code">{{otp_code}}</div>
+                <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                    Este código expirará en breve. Úsalo solo una vez.
+                </div>
+            </div>
+            
+            <div class="warning">
+                <strong>Importante:</strong> Por seguridad, no compartas este código con nadie. Si no solicitaste este código, ignora este mensaje.
+            </div>
+            
+            <div class="message">
+                Ingresa este código en la plataforma para verificar tu cuenta. Una vez verificada, recibirás tus credenciales de acceso.
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div class="footer-text">
+                © {{year}} AdminTransporte. Todos los derechos reservados.
+            </div>
+            <div class="footer-text">
+                Desarrollado por <a href="https://tecnotics.com" class="footer-link">Tecnotics</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

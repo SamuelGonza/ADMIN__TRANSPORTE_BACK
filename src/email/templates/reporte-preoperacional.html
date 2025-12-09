@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nuevo Reporte Preoperacional - Admin Transporte</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f4f4;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+        .header {
+            background-color: #1a1a1a;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .logo {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .greeting {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 20px;
+        }
+        .message {
+            font-size: 16px;
+            color: #555555;
+            margin-bottom: 30px;
+            line-height: 1.8;
+        }
+        .info-box {
+            background-color: #f8f9fa;
+            border-left: 4px solid #007bff;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        .info-item {
+            margin-bottom: 15px;
+        }
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            font-weight: 600;
+            color: #333333;
+            font-size: 14px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .info-value {
+            font-size: 16px;
+            color: #555555;
+        }
+        .status-box {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .status-ok {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+        .status-details {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            color: #856404;
+        }
+        .status-failures {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+        }
+        .alert {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #721c24;
+        }
+        .footer {
+            background-color: #1a1a1a;
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+            font-size: 14px;
+        }
+        .footer-text {
+            margin-bottom: 10px;
+        }
+        .footer-link {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .footer-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <div class="logo">AdminTransporte</div>
+        </div>
+        
+        <div class="content">
+            <div class="greeting">Hola {{company_name}},</div>
+            
+            <div class="message">
+                Se ha registrado un nuevo reporte preoperacional en el sistema. A continuación encontrarás los detalles:
+            </div>
+            
+            <div class="info-box">
+                <div class="info-item">
+                    <div class="info-label">Vehículo</div>
+                    <div class="info-value">{{placa}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Conductor</div>
+                    <div class="info-value">{{driver_name}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Estado del Reporte</div>
+                    <div class="info-value">{{report_status}}</div>
+                </div>
+            </div>
+            
+            <div class="status-box status-{{status_class}}">
+                Estado: {{report_status_text}}
+            </div>
+            
+            {{alert_message}}
+            
+            <div class="message">
+                Puedes revisar todos los detalles del reporte preoperacional, incluyendo las imágenes y descripciones, en el sistema.
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div class="footer-text">
+                © {{year}} AdminTransporte. Todos los derechos reservados.
+            </div>
+            <div class="footer-text">
+                Desarrollado por <a href="https://tecnotics.com" class="footer-link">Tecnotics</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

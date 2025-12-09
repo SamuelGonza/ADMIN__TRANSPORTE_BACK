@@ -1,0 +1,556 @@
+import { Request, Response } from "express";
+import { UserService } from "@/services/users.service";
+import { ResponseError } from "@/utils/errors";
+import { AuthRequest } from "@/utils/express";
+
+export class UsersController {
+    private userService = new UserService();
+
+    public async register_user(req: Request, res: Response) {
+        try {
+            const user_company_id = (req as AuthRequest).user?.company_id;
+            await this.userService.create_new_user({
+                payload: req.body,
+                company_id: user_company_id || req.body.company_id,
+                skip_company_validation: req.body.skip_company_validation,
+                is_new_company: req.body.is_new_company
+            });
+            res.status(201).json({
+                message: "Usuario registrado exitosamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al registrar el usuario"
+            });
+            return;
+        }
+    }
+
+    public async verify_new_account_otp(req: Request, res: Response) {
+        try {
+            const { email, otp_recovery } = req.body;
+            await this.userService.verify_new_account_otp({ email, otp_recovery });
+            res.status(200).json({
+                message: "Cuenta verificada correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al verificar la cuenta"
+            });
+            return;
+        }
+    }
+
+    public async upload_driver_documents(req: Request, res: Response) {
+        try {
+            const user_id = (req as AuthRequest).user?._id;
+            const role = (req as AuthRequest).user?.role;
+            // If user is driver, use their ID. Else use body.driver_id (admin uploading for driver)
+            const driver_id = (role === 'conductor' && user_id) ? user_id : req.body.driver_id;
+            
+            const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+            if (!files) throw new Error("No files uploaded");
+
+            const document = {
+                front: files['document_front']?.[0],
+                back: files['document_back']?.[0]
+            };
+            const licencia_conduccion = {
+                front: files['license_front']?.[0],
+                back: files['license_back']?.[0]
+            };
+
+            await this.userService.upload_driver_documents({
+                document,
+                licencia_conduccion,
+                driver_id
+            });
+            res.status(200).json({
+                message: "Documentos subidos correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al subir documentos"
+            });
+            return;
+        }
+    }
+
+    public async reset_password(req: Request, res: Response) {
+        try {
+            const { email } = req.body;
+            await this.userService.reset_password({ email });
+            res.status(200).json({
+                message: "Proceso de reseteo de contraseña iniciado"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al iniciar reseteo de contraseña"
+            });
+            return;
+        }
+    }
+
+    public async verify_otp_password_reset(req: Request, res: Response) {
+        try {
+            const { email, otp_recovery } = req.body;
+            await this.userService.verify_otp_password_reset({ email, otp_recovery });
+            res.status(200).json({
+                message: "Código OTP verificado"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al verificar OTP"
+            });
+            return;
+        }
+    }
+
+    public async update_new_password(req: Request, res: Response) {
+        try {
+            const { email, new_password } = req.body;
+            await this.userService.update_new_password({ email, new_password });
+            res.status(200).json({
+                message: "Contraseña actualizada correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar contraseña"
+            });
+            return;
+        }
+    }
+
+    public async login(req: Request, res: Response) {
+        try {
+            const { email, password } = req.body;
+            const response = await this.userService.login({ email, password });
+            
+            // Crear cookie de sesión
+            res.cookie("_session_token_", response.token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 días
+                path: "/"
+            });
+
+            res.status(200).json({
+                message: "Sesión iniciada correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al iniciar sesión"
+            });
+            return;
+        }
+    }
+
+    public async get_all_users(req: Request, res: Response) {
+        try {
+            const { page, limit, name, document, email, company_id, role } = req.query;
+            const user_company_id = (req as AuthRequest).user?.company_id;
+            
+            const filters = {
+                name: name as string,
+                document: document ? Number(document) : undefined,
+                email: email as string,
+                company_id: (user_company_id || company_id) as string,
+                role: role as any
+            };
+            
+            const response = await this.userService.get_all_users({
+                filters,
+                page: page ? Number(page) : 1,
+                limit: limit ? Number(limit) : 10
+            });
+            res.status(200).json({
+                message: "Usuarios obtenidos correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener usuarios"
+            });
+            return;
+        }
+    }
+
+    public async get_all_users_company(req: Request, res: Response) {
+        try {
+            const { page, limit, name, document, email, role } = req.query;
+            const { company_id } = req.params;
+            const user_company_id = (req as AuthRequest).user?.company_id;
+            
+            const filters = {
+                name: name as string,
+                document: document ? Number(document) : undefined,
+                email: email as string,
+                role: role as any
+            };
+
+            const response = await this.userService.get_all_users_company({
+                filters,
+                page: page ? Number(page) : 1,
+                limit: limit ? Number(limit) : 10,
+                company_id: user_company_id || company_id
+            });
+            res.status(200).json({
+                message: "Usuarios de la compañía obtenidos correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener usuarios de la compañía"
+            });
+            return;
+        }
+    }
+
+    public async get_user_by_id(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const response = await this.userService.get_user_by_id({ id });
+            res.status(200).json({
+                message: "Usuario obtenido correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener el usuario"
+            });
+            return;
+        }
+    }
+
+    public async update_user_info(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { full_name, contact } = req.body;
+            await this.userService.update_user_info({ full_name, contact, id });
+            res.status(200).json({
+                message: "Información del usuario actualizada"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar información del usuario"
+            });
+            return;
+        }
+    }
+
+    public async update_user_avatar(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const file = req.file;
+            if (!file) throw new Error("No image uploaded");
+
+            await this.userService.update_user_avatar({ new_avatar: file, id });
+            res.status(200).json({
+                message: "Avatar actualizado correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar avatar"
+            });
+            return;
+        }
+    }
+
+    public async update_driver_documents(req: Request, res: Response) {
+        try {
+            const user_id = (req as AuthRequest).user?._id;
+            const role = (req as AuthRequest).user?.role;
+            const { driver_id } = req.params;
+            
+            // If user is driver, ignore params driver_id and use their own
+            const target_driver_id = (role === 'conductor' && user_id) ? user_id : driver_id;
+            
+            const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+            if (!files) throw new Error("No files uploaded");
+
+            const document = {
+                front: files['document_front']?.[0],
+                back: files['document_back']?.[0]
+            };
+            const licencia_conduccion = {
+                front: files['license_front']?.[0],
+                back: files['license_back']?.[0]
+            };
+
+            await this.userService.update_driver_documents({
+                document,
+                licencia_conduccion,
+                driver_id: target_driver_id
+            });
+            res.status(200).json({
+                message: "Documentos actualizados correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar documentos"
+            });
+            return;
+        }
+    }
+
+    public async change_active_status(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            await this.userService.change_active_status({ id });
+            res.status(200).json({
+                message: "Estado activo cambiado correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al cambiar estado activo"
+            });
+            return;
+        }
+    }
+
+    public async delete_user(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            await this.userService.delete_user({ user_id: id });
+            res.status(200).json({
+                message: "Usuario eliminado correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al eliminar usuario"
+            });
+            return;
+        }
+    }
+
+    // #========== SESSION METHODS ==========#
+
+    public async get_me(req: Request, res: Response) {
+        try {
+            const user = (req as AuthRequest).user;
+            if (!user) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No hay sesión activa"
+                });
+                return;
+            }
+
+            const response = await this.userService.get_user_by_id({ id: user._id });
+            res.status(200).json({
+                message: "Sesión válida",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener la sesión"
+            });
+            return;
+        }
+    }
+
+    public async refresh_session(req: Request, res: Response) {
+        try {
+            const user = (req as AuthRequest).user;
+            if (!user) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No hay sesión activa"
+                });
+                return;
+            }
+
+            // Obtener datos actualizados del usuario
+            const userData = await this.userService.get_user_by_id({ id: user._id });
+            
+            // Generar nuevo token
+            const { generate_token_session } = await import("@/utils/generate");
+            const newToken = generate_token_session({ 
+                id: user._id, 
+                role: userData.role 
+            });
+
+            // Crear nueva cookie de sesión
+            res.cookie("_session_token_", newToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 días
+                path: "/"
+            });
+
+            res.status(200).json({
+                message: "Sesión renovada exitosamente",
+                data: {
+                    token: newToken,
+                    user: userData
+                }
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al renovar la sesión"
+            });
+            return;
+        }
+    }
+
+    public async logout(req: Request, res: Response) {
+        try {
+            // Eliminar la cookie de sesión
+            res.clearCookie("_session_token_", {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+                path: "/"
+            });
+
+            res.status(200).json({
+                message: "Sesión cerrada exitosamente"
+            });
+        } catch (error) {
+            res.status(500).json({
+                ok: false,
+                message: "Error al cerrar sesión"
+            });
+            return;
+        }
+    }
+}
