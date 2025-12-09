@@ -647,6 +647,99 @@ export class SolicitudesService {
         }
     }
 
+    /**
+     * Obtener solicitudes del cliente autenticado
+     * El cliente ve todas sus solicitudes (pendientes, aceptadas, rechazadas)
+     */
+    public async get_client_solicitudes({
+        client_id,
+        filters,
+        page = 1,
+        limit = 10
+    }: {
+        client_id: string,
+        filters?: {
+            status?: "pending" | "accepted" | "rejected",
+            service_status?: "not-started" | "started" | "finished",
+            fecha_inicio?: Date,
+            fecha_fin?: Date,
+        },
+        page?: number,
+        limit?: number
+    }) {
+        try {
+            const query: any = {
+                cliente: client_id
+            };
+
+            if (filters?.status) query.status = filters.status;
+            if (filters?.service_status) query.service_status = filters.service_status;
+
+            // Filtro por rango de fechas
+            if (filters?.fecha_inicio || filters?.fecha_fin) {
+                query.fecha = {};
+                if (filters.fecha_inicio) query.fecha.$gte = filters.fecha_inicio;
+                if (filters.fecha_fin) query.fecha.$lte = filters.fecha_fin;
+            }
+
+            const skip = (page - 1) * limit;
+
+            const solicitudes = await solicitudModel
+                .find(query)
+                .populate('vehiculo_id', 'placa type flota seats name')
+                .populate('conductor', 'full_name contact')
+                .sort({ created: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean();
+
+            const total = await solicitudModel.countDocuments(query);
+
+            return {
+                solicitudes,
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron obtener las solicitudes del cliente");
+        }
+    }
+
+    /**
+     * Obtener detalle de una solicitud del cliente
+     * Verifica que la solicitud pertenezca al cliente
+     */
+    public async get_client_solicitud_by_id({
+        client_id,
+        solicitud_id
+    }: {
+        client_id: string,
+        solicitud_id: string
+    }) {
+        try {
+            const solicitud = await solicitudModel
+                .findOne({ 
+                    _id: solicitud_id, 
+                    cliente: client_id
+                })
+                .populate('vehiculo_id', 'placa type flota seats name description picture')
+                .populate('conductor', 'full_name contact avatar')
+                .lean();
+
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada o no tienes acceso");
+
+            return solicitud;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo obtener la solicitud");
+        }
+    }
+
     //* #========== PRIVATE METHODS ==========#
 
     /**

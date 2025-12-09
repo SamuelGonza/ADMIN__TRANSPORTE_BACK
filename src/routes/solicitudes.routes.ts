@@ -20,6 +20,14 @@ router.post("/coordinator", CoordinadorAuth, solicitudesController.create_solici
 // Obtener todas las solicitudes (coordinador+)
 router.get("/", CoordinadorAuth, solicitudesController.get_all_solicitudes.bind(solicitudesController));
 
+// #========== RUTAS DEL CLIENTE ==========#
+
+// Obtener mis solicitudes como cliente
+router.get("/my-requests", ClienteAuth, solicitudesController.get_client_solicitudes.bind(solicitudesController));
+
+// Obtener detalle de mi solicitud como cliente
+router.get("/my-requests/:id", ClienteAuth, solicitudesController.get_client_solicitud_by_id.bind(solicitudesController));
+
 // #========== RUTAS DEL CONDUCTOR ==========#
 
 // Obtener mis solicitudes asignadas (conductor)

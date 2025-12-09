@@ -5,6 +5,7 @@ import { CoordinadorAuth } from "@/auth/coordinador.auth";
 import { OperadorAuth } from "@/auth/operador.auth";
 import { SessionAuth } from "@/auth/session.auth";
 import { upload } from "@/middlewares/multer.middleware";
+import { SuperAdminAut } from "@/auth/superadmon.auth";
 
 const router: Router = Router();
 const usersController = new UsersController();
@@ -45,7 +46,7 @@ router.post(
 );
 
 // Obtener todos los usuarios (SuperAdmin puede ver todos)
-router.get("/", AdminAut, usersController.get_all_users.bind(usersController));
+router.get("/", SuperAdminAut, usersController.get_all_users.bind(usersController));
 
 // Obtener usuarios de una compañía específica
 router.get("/company/:company_id", CoordinadorAuth, usersController.get_all_users_company.bind(usersController));

@@ -358,4 +358,96 @@ export class SolicitudesController {
             return;
         }
     }
+
+    /**
+     * Obtener solicitudes del cliente autenticado
+     */
+    public async get_client_solicitudes(req: Request, res: Response) {
+        try {
+            const client_id = (req as AuthRequest).user?._id;
+            
+            if (!client_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No se pudo identificar al cliente"
+                });
+                return;
+            }
+
+            const { page, limit, status, service_status, fecha_inicio, fecha_fin } = req.query;
+
+            const filters = {
+                status: status as any,
+                service_status: service_status as any,
+                fecha_inicio: fecha_inicio ? new Date(fecha_inicio as string) : undefined,
+                fecha_fin: fecha_fin ? new Date(fecha_fin as string) : undefined
+            };
+
+            const response = await this.solicitudesService.get_client_solicitudes({
+                client_id,
+                filters,
+                page: page ? Number(page) : 1,
+                limit: limit ? Number(limit) : 10
+            });
+
+            res.status(200).json({
+                message: "Solicitudes del cliente obtenidas correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener solicitudes del cliente"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Obtener detalle de una solicitud del cliente
+     */
+    public async get_client_solicitud_by_id(req: Request, res: Response) {
+        try {
+            const client_id = (req as AuthRequest).user?._id;
+            const { id } = req.params;
+            
+            if (!client_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No se pudo identificar al cliente"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.get_client_solicitud_by_id({
+                client_id,
+                solicitud_id: id
+            });
+
+            res.status(200).json({
+                message: "Solicitud obtenida correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener solicitud"
+            });
+            return;
+        }
+    }
 }
