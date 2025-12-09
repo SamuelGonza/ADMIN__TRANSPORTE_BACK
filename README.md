@@ -1189,6 +1189,159 @@ El sistema tiene los siguientes roles con jerarquía de permisos:
 
 ---
 
+### Rutas del Conductor
+
+---
+
+#### `GET /api/v1/solicitudes/my-services`
+
+**Descripción:** Obtiene todas las solicitudes asignadas al conductor autenticado. Solo devuelve solicitudes en estado "accepted" (aprobadas y con conductor asignado).
+
+**Autenticación:** ✅ Requiere `conductor`, `operador`, `coordinador`, `admin` o `superadmon`
+
+**Query Parameters (opcionales):**
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `page` | number | Número de página (default: 1) |
+| `limit` | number | Resultados por página (default: 10) |
+| `service_status` | string | Filtrar por estado: `not-started`, `started`, `finished` |
+| `fecha_inicio` | string | Filtrar desde fecha (ISO 8601) |
+| `fecha_fin` | string | Filtrar hasta fecha (ISO 8601) |
+
+**Respuesta Exitosa (200):**
+```json
+{
+    "message": "Solicitudes del conductor obtenidas correctamente",
+    "data": {
+        "solicitudes": [
+            {
+                "_id": "64f8a1b2c3d4e5f6g7h8i9j0",
+                "he": "HE-2024-001",
+                "empresa": "travel",
+                "fecha": "2024-01-15T00:00:00.000Z",
+                "hora_inicio": "08:00",
+                "origen": "Aeropuerto El Dorado, Bogotá",
+                "destino": "Hotel Hilton, Cartagena",
+                "n_pasajeros": 8,
+                "cliente": {
+                    "_id": "...",
+                    "name": "Empresas ABC Colombia",
+                    "contact_name": "Diana Martínez",
+                    "contact_phone": "3001234567",
+                    "phone": "6012345678"
+                },
+                "vehiculo_id": {
+                    "_id": "...",
+                    "placa": "ABC123",
+                    "type": "van",
+                    "flota": "propio",
+                    "seats": 15,
+                    "name": "Van Sprinter 2023"
+                },
+                "service_status": "not-started",
+                "contacto": "Diana Martínez",
+                "novedades": ""
+            }
+        ],
+        "pagination": {
+            "total": 5,
+            "page": 1,
+            "limit": 10,
+            "totalPages": 1
+        }
+    }
+}
+```
+
+**Ejemplos de uso:**
+
+```bash
+# Obtener todas mis solicitudes
+GET /api/v1/solicitudes/my-services
+
+# Filtrar por servicios pendientes de iniciar
+GET /api/v1/solicitudes/my-services?service_status=not-started
+
+# Filtrar por servicios en curso
+GET /api/v1/solicitudes/my-services?service_status=started
+
+# Filtrar por servicios finalizados
+GET /api/v1/solicitudes/my-services?service_status=finished
+
+# Filtrar por rango de fechas
+GET /api/v1/solicitudes/my-services?fecha_inicio=2024-01-01&fecha_fin=2024-01-31
+
+# Combinación de filtros con paginación
+GET /api/v1/solicitudes/my-services?service_status=not-started&page=1&limit=5
+```
+
+---
+
+#### `GET /api/v1/solicitudes/my-services/:id`
+
+**Descripción:** Obtiene el detalle completo de una solicitud asignada al conductor autenticado. Solo permite acceso si el conductor está asignado a esa solicitud.
+
+**Autenticación:** ✅ Requiere `conductor`, `operador`, `coordinador`, `admin` o `superadmon`
+
+**URL Parameters:**
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `id` | string | ID de la solicitud |
+
+**Respuesta Exitosa (200):**
+```json
+{
+    "message": "Solicitud obtenida correctamente",
+    "data": {
+        "_id": "64f8a1b2c3d4e5f6g7h8i9j0",
+        "he": "HE-2024-001",
+        "empresa": "travel",
+        "fecha": "2024-01-15T00:00:00.000Z",
+        "hora_inicio": "08:00",
+        "hora_final": "",
+        "total_horas": 0,
+        "origen": "Aeropuerto El Dorado, Bogotá",
+        "destino": "Hotel Hilton, Cartagena",
+        "n_pasajeros": 8,
+        "novedades": "",
+        "cliente": {
+            "_id": "...",
+            "name": "Empresas ABC Colombia",
+            "email": "cliente@empresa.com",
+            "contact_name": "Diana Martínez",
+            "contact_phone": "3001234567",
+            "phone": "6012345678"
+        },
+        "vehiculo_id": {
+            "_id": "...",
+            "placa": "ABC123",
+            "type": "van",
+            "flota": "propio",
+            "seats": 15,
+            "name": "Van Sprinter 2023",
+            "description": "Van Mercedes con A/C y WiFi"
+        },
+        "contacto": "Diana Martínez",
+        "service_status": "not-started",
+        "status": "accepted"
+    }
+}
+```
+
+**Respuesta de Error (404):**
+```json
+{
+    "ok": false,
+    "message": "Solicitud no encontrada o no tienes acceso"
+}
+```
+
+---
+
+### Rutas de Coordinador
+
+---
+
 #### `PUT /api/v1/solicitudes/:id/accept`
 
 **Descripción:** Acepta una solicitud pendiente, asignando vehículo, conductor y datos financieros.
@@ -1248,9 +1401,9 @@ El sistema tiene los siguientes roles con jerarquía de permisos:
 
 #### `PUT /api/v1/solicitudes/:id/start`
 
-**Descripción:** Marca el inicio del servicio (ejecutado por el conductor).
+**Descripción:** Marca el inicio del servicio. Cambia el `service_status` de `not-started` a `started`. Solo se puede iniciar si la solicitud está en estado "accepted".
 
-**Autenticación:** ✅ Requiere `operador`, `admin` o `superadmon`
+**Autenticación:** ✅ Requiere `conductor`, `operador`, `coordinador`, `admin` o `superadmon`
 
 **URL Parameters:**
 | Parámetro | Tipo | Descripción |
@@ -1269,9 +1422,9 @@ El sistema tiene los siguientes roles con jerarquía de permisos:
 
 #### `PUT /api/v1/solicitudes/:id/finish`
 
-**Descripción:** Marca el fin del servicio con hora final y novedades.
+**Descripción:** Marca el fin del servicio con hora final y novedades. Calcula automáticamente el total de horas. Cambia el `service_status` de `started` a `finished`. Solo se puede finalizar si el servicio ya fue iniciado.
 
-**Autenticación:** ✅ Requiere `operador`, `admin` o `superadmon`
+**Autenticación:** ✅ Requiere `conductor`, `operador`, `coordinador`, `admin` o `superadmon`
 
 **URL Parameters:**
 | Parámetro | Tipo | Descripción |

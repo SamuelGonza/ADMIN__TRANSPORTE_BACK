@@ -267,4 +267,95 @@ export class SolicitudesController {
             return;
         }
     }
+
+    /**
+     * Obtener solicitudes asignadas al conductor autenticado
+     */
+    public async get_my_solicitudes(req: Request, res: Response) {
+        try {
+            const conductor_id = (req as AuthRequest).user?._id;
+            
+            if (!conductor_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No se pudo identificar al conductor"
+                });
+                return;
+            }
+
+            const { page, limit, service_status, fecha_inicio, fecha_fin } = req.query;
+
+            const filters = {
+                service_status: service_status as any,
+                fecha_inicio: fecha_inicio ? new Date(fecha_inicio as string) : undefined,
+                fecha_fin: fecha_fin ? new Date(fecha_fin as string) : undefined
+            };
+
+            const response = await this.solicitudesService.get_my_solicitudes({
+                conductor_id,
+                filters,
+                page: page ? Number(page) : 1,
+                limit: limit ? Number(limit) : 10
+            });
+
+            res.status(200).json({
+                message: "Solicitudes del conductor obtenidas correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener solicitudes del conductor"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Obtener detalle de una solicitud asignada al conductor
+     */
+    public async get_my_solicitud_by_id(req: Request, res: Response) {
+        try {
+            const conductor_id = (req as AuthRequest).user?._id;
+            const { id } = req.params;
+            
+            if (!conductor_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No se pudo identificar al conductor"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.get_my_solicitud_by_id({
+                conductor_id,
+                solicitud_id: id
+            });
+
+            res.status(200).json({
+                message: "Solicitud obtenida correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener solicitud"
+            });
+            return;
+        }
+    }
 }
