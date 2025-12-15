@@ -17,6 +17,7 @@ import solicitudesRouter from "@/routes/solicitudes.routes";
 import vehiclesRouter from "@/routes/vehicles.routes";
 import contractsRouter from "@/routes/contracts.routes";
 import locationsRouter from "@/routes/locations.routes";
+import bitacoraRouter from "@/routes/bitacora.routes";
 
 // Configuración CORS con orígenes permitidos
 const corsOptions: CorsOptions = {
@@ -98,6 +99,7 @@ app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/solicitudes`, solicitudesRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/vehicles`, vehiclesRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/contracts`, contractsRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/locations`, locationsRouter);
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/bitacoras`, bitacoraRouter);
 
 // Manejo de rutas no encontradas (debe ir al final)
 app.use((req: Request, res: Response) => {
