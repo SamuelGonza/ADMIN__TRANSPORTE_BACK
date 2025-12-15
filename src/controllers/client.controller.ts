@@ -72,8 +72,22 @@ export class ClientController {
         try {
             const { page, limit, company_id, name, email, contact_name, contact_phone } = req.query;
             const company_id_user = (req as AuthRequest).user?.company_id;
+            
+            // Asegurar que company_id sea siempre un string (ID), no un objeto
+            let final_company_id: string | undefined;
+            if (company_id_user) {
+                // Si es un objeto, extraer el _id, si es string, usarlo directamente
+                final_company_id = typeof company_id_user === 'string' 
+                    ? company_id_user 
+                    : (company_id_user as any)?._id?.toString() || (company_id_user as any)?.toString();
+            } else if (company_id) {
+                final_company_id = typeof company_id === 'string' 
+                    ? company_id 
+                    : (company_id as any)?._id?.toString() || (company_id as any)?.toString();
+            }
+            
             const filters = {
-                company_id: (company_id_user || company_id) as string,
+                company_id: final_company_id,
                 name: name as string,
                 email: email as string,
                 contact_name: contact_name as string,

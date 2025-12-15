@@ -272,7 +272,14 @@ export class UsersController {
             const { page, limit, name, document, email, role } = req.query;
             const { company_id } = req.params;
             const user_role = (req as AuthRequest).user?.role;
-            const user_company_id = (req as AuthRequest).user?.company_id;
+            const user_company_id_raw = (req as AuthRequest).user?.company_id;
+            
+            // Normalizar company_id: si es objeto, extraer el _id; si es string, usarlo directamente
+            const user_company_id = user_company_id_raw 
+                ? (typeof user_company_id_raw === 'string' 
+                    ? user_company_id_raw 
+                    : (user_company_id_raw as any)?._id?.toString() || (user_company_id_raw as any)?.toString())
+                : undefined;
             
             // Si es superadmin, puede consultar cualquier company_id
             // Si es otro rol, solo puede consultar su propia company_id
@@ -281,7 +288,7 @@ export class UsersController {
                 final_company_id = company_id;
             } else {
                 // Otros roles solo pueden consultar su propia company_id
-                if (company_id !== user_company_id) {
+                if (company_id && user_company_id && company_id !== user_company_id) {
                     throw new ResponseError(403, "No tienes permisos para consultar usuarios de otra compañía");
                 }
                 final_company_id = user_company_id || company_id;

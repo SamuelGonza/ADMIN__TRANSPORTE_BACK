@@ -96,8 +96,19 @@ export class ClientService {
             const query: any = {};
 
             // Filtro por company_id (exacto)
+            // Asegurar que company_id sea un string válido (ObjectId)
             if (filters.company_id) {
-                query.company_id = filters.company_id;
+                // Si es un objeto, extraer el _id, si es string, usarlo directamente
+                const companyId = typeof filters.company_id === 'string' 
+                    ? filters.company_id 
+                    : (filters.company_id as any)?._id?.toString() || (filters.company_id as any)?.toString();
+                
+                // Validar que sea un ObjectId válido (24 caracteres hex)
+                if (companyId && /^[0-9a-fA-F]{24}$/.test(companyId)) {
+                    query.company_id = companyId;
+                } else {
+                    throw new ResponseError(400, "company_id inválido");
+                }
             }
 
             // Filtros de búsqueda global (case-insensitive)
