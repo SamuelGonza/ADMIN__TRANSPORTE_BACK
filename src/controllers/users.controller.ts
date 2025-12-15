@@ -220,13 +220,25 @@ export class UsersController {
     public async get_all_users(req: Request, res: Response) {
         try {
             const { page, limit, name, document, email, company_id, role } = req.query;
+            const user_role = (req as AuthRequest).user?.role;
             const user_company_id = (req as AuthRequest).user?.company_id;
+            
+            // Si es superadmin, puede ver todos los usuarios (puede filtrar por company_id si lo especifica)
+            // Si es otro rol, solo puede ver usuarios de su company_id
+            let final_company_id: string | undefined;
+            if (user_role === "superadmon") {
+                // Superadmin puede ver todos o filtrar por company_id si lo especifica
+                final_company_id = company_id as string | undefined;
+            } else {
+                // Otros roles solo pueden ver usuarios de su company_id
+                final_company_id = user_company_id;
+            }
             
             const filters = {
                 name: name as string,
                 document: document ? Number(document) : undefined,
                 email: email as string,
-                company_id: (user_company_id || company_id) as string,
+                company_id: final_company_id,
                 role: role as any
             };
             
@@ -259,7 +271,21 @@ export class UsersController {
         try {
             const { page, limit, name, document, email, role } = req.query;
             const { company_id } = req.params;
+            const user_role = (req as AuthRequest).user?.role;
             const user_company_id = (req as AuthRequest).user?.company_id;
+            
+            // Si es superadmin, puede consultar cualquier company_id
+            // Si es otro rol, solo puede consultar su propia company_id
+            let final_company_id: string;
+            if (user_role === "superadmon") {
+                final_company_id = company_id;
+            } else {
+                // Otros roles solo pueden consultar su propia company_id
+                if (company_id !== user_company_id) {
+                    throw new ResponseError(403, "No tienes permisos para consultar usuarios de otra compañía");
+                }
+                final_company_id = user_company_id || company_id;
+            }
             
             const filters = {
                 name: name as string,
@@ -272,7 +298,7 @@ export class UsersController {
                 filters,
                 page: page ? Number(page) : 1,
                 limit: limit ? Number(limit) : 10,
-                company_id: user_company_id || company_id
+                company_id: final_company_id
             });
             res.status(200).json({
                 message: "Usuarios de la compañía obtenidos correctamente",
@@ -297,7 +323,21 @@ export class UsersController {
     public async get_user_by_id(req: Request, res: Response) {
         try {
             const { id } = req.params;
+            const user_role = (req as AuthRequest).user?.role;
+            const user_company_id = (req as AuthRequest).user?.company_id;
+            
             const response = await this.userService.get_user_by_id({ id });
+            
+            // Si no es superadmin, validar que el usuario consultado pertenezca a su company_id
+            if (user_role !== "superadmon") {
+                const userCompanyId = (response as any)?.company_id?.toString();
+                const authCompanyId = user_company_id?.toString();
+                
+                if (userCompanyId !== authCompanyId) {
+                    throw new ResponseError(403, "No tienes permisos para consultar usuarios de otra compañía");
+                }
+            }
+            
             res.status(200).json({
                 message: "Usuario obtenido correctamente",
                 data: response

@@ -7,6 +7,7 @@ import { SessionAuth } from "@/auth/session.auth";
 import { upload } from "@/middlewares/multer.middleware";
 import { SuperAdminAut } from "@/auth/superadmon.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
+import { UsersReadAuth } from "@/auth/users-read.auth";
 
 const router: Router = Router();
 const usersController = new UsersController();
@@ -451,13 +452,16 @@ router.get(
     usersController.download_driver_technical_sheet_pdf.bind(usersController)
 );
 
-// Obtener todos los usuarios (SuperAdmin puede ver todos)
+// Obtener todos los usuarios
 /**
  * @openapi
  * /users:
  *   get:
  *     tags: [Users]
- *     summary: Listar usuarios (superadmon)
+ *     summary: Listar usuarios (superadmin/admin/coordinador/contabilidad/calidad)
+ *     description: |
+ *       - Superadmin puede ver todos los usuarios del sistema (puede filtrar por company_id si lo especifica).
+ *       - Otros roles (admin, coordinador, contabilidad, calidad) solo pueden ver usuarios de su company_id.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -479,6 +483,7 @@ router.get(
  *       - in: query
  *         name: company_id
  *         schema: { type: string }
+ *         description: Solo superadmin puede usar este filtro. Otros roles verán solo su company_id.
  *       - in: query
  *         name: role
  *         schema: { type: string }
@@ -498,7 +503,7 @@ router.get(
  *                     pagination: { $ref: '#/components/schemas/UsersPagination' }
  *               required: [message, data]
  */
-router.get("/", SuperAdminAut, usersController.get_all_users.bind(usersController));
+router.get("/", UsersReadAuth, usersController.get_all_users.bind(usersController));
 
 // Obtener usuarios de una compañía específica
 /**
@@ -506,7 +511,10 @@ router.get("/", SuperAdminAut, usersController.get_all_users.bind(usersControlle
  * /users/company/{company_id}:
  *   get:
  *     tags: [Users]
- *     summary: Listar usuarios de una compañía (contabilidad)
+ *     summary: Listar usuarios de una compañía (superadmin/admin/coordinador/contabilidad/calidad)
+ *     description: |
+ *       - Superadmin puede consultar usuarios de cualquier compañía.
+ *       - Otros roles solo pueden consultar usuarios de su propia company_id.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -548,7 +556,7 @@ router.get("/", SuperAdminAut, usersController.get_all_users.bind(usersControlle
  *                     pagination: { $ref: '#/components/schemas/UsersPagination' }
  *               required: [message, data]
  */
-router.get("/company/:company_id", ContabilidadAuth, usersController.get_all_users_company.bind(usersController));
+router.get("/company/:company_id", UsersReadAuth, usersController.get_all_users_company.bind(usersController));
 
 // Obtener usuario por ID
 /**
@@ -556,7 +564,10 @@ router.get("/company/:company_id", ContabilidadAuth, usersController.get_all_use
  * /users/{id}:
  *   get:
  *     tags: [Users]
- *     summary: Obtener usuario por ID (contabilidad)
+ *     summary: Obtener usuario por ID (superadmin/admin/coordinador/contabilidad/calidad)
+ *     description: |
+ *       - Superadmin puede consultar cualquier usuario.
+ *       - Otros roles solo pueden consultar usuarios de su propia company_id.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -575,8 +586,14 @@ router.get("/company/:company_id", ContabilidadAuth, usersController.get_all_use
  *                 message: { type: string }
  *                 data: { type: object }
  *               required: [message, data]
+ *       403:
+ *         description: No tienes permisos para consultar usuarios de otra compañía
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get("/:id", ContabilidadAuth, usersController.get_user_by_id.bind(usersController));
+router.get("/:id", UsersReadAuth, usersController.get_user_by_id.bind(usersController));
 
 // Actualizar información de usuario
 /**
