@@ -396,8 +396,8 @@ export class SolicitudesService {
             estimated_hours?: number,
 
             // Vehículo y conductor
-            vehiculo_id: string,
-            conductor_id: string,
+            placa: string, // Se usa placa en lugar de vehiculo_id
+            conductor_id?: string, // Opcional: si no se proporciona, se usa el conductor principal del vehículo
 
             // Datos financieros
             nombre_cuenta_cobro: string,
@@ -443,23 +443,29 @@ export class SolicitudesService {
                 estimated_km: payload.estimated_km
             });
 
-            // Obtener información del vehículo
-            const vehicle = await SolicitudesService.VehicleServices.get_vehicle_by_id({ id: payload.vehiculo_id });
-            if (!vehicle) throw new ResponseError(404, "Vehículo no encontrado");
+            // Buscar vehículo por placa - automáticamente trae conductor y propietario
+            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                placa: payload.placa,
+                company_id: String(client.company_id)
+            });
 
-            // Validar que el conductor seleccionado esté permitido para el vehículo
-            const driver_id = (vehicle as any).driver_id?._id ? String((vehicle as any).driver_id._id) : String((vehicle as any).driver_id);
-            const possible_ids: string[] = Array.isArray((vehicle as any).possible_drivers)
-                ? (vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
+            // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
+            const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
+            const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
+                ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
                 : [];
-            const allowed_driver_ids = new Set<string>([driver_id, ...possible_ids].filter(Boolean));
-            if (!allowed_driver_ids.has(String(payload.conductor_id))) {
+            const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
+
+            const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
+            if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
+            if (!allowed_driver_ids.has(target_driver_id)) {
                 throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
             }
 
-            // Obtener información del conductor
-            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: payload.conductor_id });
+            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
             if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+
+            const vehicle = vehicleData.vehicle;
 
             // Crear la solicitud ya aceptada
             const new_solicitud = await solicitudModel.create({
@@ -493,11 +499,11 @@ export class SolicitudesService {
                 novedades: "",
 
                 // Vehículo y conductor (auto-rellenados desde los modelos)
-                vehiculo_id: payload.vehiculo_id,
+                vehiculo_id: (vehicle as any)._id,
                 placa: vehicle.placa,
                 tipo_vehiculo: vehicle.type,
                 flota: vehicle.flota,
-                conductor: payload.conductor_id,
+                conductor: target_driver_id,
                 conductor_phone: conductor.contact?.phone || "",
 
                 // Datos financieros
