@@ -14,6 +14,8 @@ import { LocationsService } from './locations.service';
 import contractModel from '@/models/contract.model';
 import companyModel from '@/models/company.model';
 import vhc_operationalModel from '@/models/vhc_operational.model';
+import bitacoraModel from '@/models/bitacora.model';
+import mongoose from 'mongoose';
 import fs from "fs";
 import path from "path";
 import { renderHtmlToPdfBuffer } from "@/utils/pdf";
@@ -177,9 +179,56 @@ export class SolicitudesService {
     //* #========== POST METHODS ==========#
 
     /**
+     * Obtener o crear bitácora del mes/año actual para una compañía
+     */
+    private async get_or_create_bitacora({
+        company_id,
+        fecha
+    }: {
+        company_id: string | mongoose.Types.ObjectId,
+        fecha: Date
+    }): Promise<mongoose.Types.ObjectId> {
+        try {
+            // Extraer año y mes de la fecha
+            const fecha_obj = dayjs(fecha);
+            const year = fecha_obj.format('YYYY');
+            const month = fecha_obj.format('MM');
+
+            // Normalizar company_id a ObjectId
+            const company_id_obj = typeof company_id === 'string' 
+                ? new mongoose.Types.ObjectId(company_id)
+                : company_id;
+
+            // Buscar bitácora existente
+            let bitacora = await bitacoraModel.findOne({
+                company_id: company_id_obj,
+                year,
+                month
+            });
+
+            // Si no existe, crearla
+            if (!bitacora) {
+                const new_bitacora = await bitacoraModel.create({
+                    company_id: company_id_obj,
+                    year,
+                    month,
+                    created: new Date()
+                });
+                return new_bitacora._id;
+            }
+
+            return bitacora._id;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al obtener o crear la bitácora");
+        }
+    }
+
+    /**
      * Crear solicitud por parte del CLIENTE
      * Solo proporciona datos básicos del servicio
      * Status: pending (requiere aprobación del coordinador)
+     * La bitácora se busca automáticamente según la fecha del servicio
      */
     public async create_solicitud_by_client({
         client_id,
@@ -187,7 +236,7 @@ export class SolicitudesService {
     }: {
         client_id: string,
         payload: {
-            bitacora_id: string,
+            bitacora_id?: string, // Opcional: si no se proporciona, se busca automáticamente
             fecha: Date,
             hora_inicio: string,
             origen: string,
@@ -203,6 +252,29 @@ export class SolicitudesService {
             const client = await SolicitudesService.ClientService.get_client_by_id({ id: client_id });
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
 
+            // Obtener o crear bitácora automáticamente basada en la fecha
+            let bitacora_id: mongoose.Types.ObjectId;
+            if (payload.bitacora_id) {
+                // Si se proporciona bitacora_id, validar que existe
+                if (!mongoose.Types.ObjectId.isValid(payload.bitacora_id)) {
+                    throw new ResponseError(400, "ID de bitácora inválido");
+                }
+                const bitacora = await bitacoraModel.findById(payload.bitacora_id);
+                if (!bitacora) {
+                    throw new ResponseError(404, "Bitácora no encontrada");
+                }
+                bitacora_id = bitacora._id;
+            } else {
+                // Buscar o crear bitácora automáticamente
+                const client_company_id = typeof client.company_id === 'object' 
+                    ? (client.company_id as any)._id || client.company_id
+                    : client.company_id;
+                bitacora_id = await this.get_or_create_bitacora({
+                    company_id: String(client_company_id),
+                    fecha: payload.fecha
+                });
+            }
+
             const loc = await this.resolve_locations({
                 company_id: String(client.company_id),
                 origen: payload.origen,
@@ -211,7 +283,7 @@ export class SolicitudesService {
 
             // Crear la solicitud con status pending
             const new_solicitud = await solicitudModel.create({
-                bitacora_id: payload.bitacora_id,
+                bitacora_id: bitacora_id,
 
                 // Datos proporcionados por el cliente
                 fecha: payload.fecha,

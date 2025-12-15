@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken";
 
 /**
  * Acceso de Gestión (operativo + comercial):
- * - superadmon, admin, coordinador, comercia
+ * - superadmon, admin, coordinador, comercia, operador, contabilidad
  * Útil para endpoints compartidos (p.ej. crear solicitud desde staff, gestionar clientes/contratos).
  */
 export const GestionAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -18,7 +18,7 @@ export const GestionAuth = async (req: Request, res: Response, next: NextFunctio
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador", "comercial"];
+        const allowedRoles = ["superadmon", "admin", "coordinador", "comercial", "operador", "contabilidad"];
         if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
 
         (req as AuthRequest).user = {

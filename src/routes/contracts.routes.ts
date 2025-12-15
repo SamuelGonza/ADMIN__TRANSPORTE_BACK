@@ -5,7 +5,7 @@ import { GestionAuth } from "@/auth/gestion.auth";
 const router: Router = Router();
 const contractsController = new ContractsController();
 
-// #========== RUTAS PROTEGIDAS (Coordinador+ / Comercia incluido por middleware) ==========#
+// #========== RUTAS PROTEGIDAS (Coordinador+ / Comercia / Operador / Contabilidad incluido por middleware) ==========#
 
 // Crear contrato
 /**

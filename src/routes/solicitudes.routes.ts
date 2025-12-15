@@ -23,7 +23,9 @@ const solicitudesController = new SolicitudesController();
  *     summary: Crear solicitud (cliente)
  *     description: |
  *       Crea una solicitud en estado `pending`. El `client_id` se toma del token del cliente.
- *       Body mínimo: bitacora_id, fecha, hora_inicio, origen, destino, n_pasajeros.
+ *       La bitácora se busca automáticamente según el mes y año de la fecha del servicio.
+ *       Si no existe una bitácora para ese mes/año, se crea automáticamente.
+ *       Body mínimo: fecha, hora_inicio, origen, destino, n_pasajeros.
  *     security:
  *       - sessionCookie: []
  *     requestBody:
@@ -33,7 +35,9 @@ const solicitudesController = new SolicitudesController();
  *           schema:
  *             type: object
  *             properties:
- *               bitacora_id: { type: string }
+ *               bitacora_id: 
+ *                 type: string
+ *                 description: Opcional. Si se proporciona, se usa esa bitácora. Si no, se busca/crea automáticamente según la fecha.
  *               fecha: { type: string, format: date-time }
  *               hora_inicio: { type: string, example: "08:00" }
  *               origen: { type: string }
@@ -42,7 +46,7 @@ const solicitudesController = new SolicitudesController();
  *               requested_passengers: { type: number }
  *               estimated_km: { type: number }
  *               estimated_hours: { type: number }
- *             required: [bitacora_id, fecha, hora_inicio, origen, destino, n_pasajeros]
+ *             required: [fecha, hora_inicio, origen, destino, n_pasajeros]
  *     responses:
  *       201:
  *         description: Solicitud creada
