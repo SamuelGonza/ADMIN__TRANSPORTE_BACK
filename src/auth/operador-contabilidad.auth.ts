@@ -5,15 +5,21 @@ import { TokenSessionPayload } from "@/utils/generate";
 import { NextFunction, Request, Response } from "express";
 import jwt from 'jsonwebtoken'
 
-export const OperadorAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Middleware para operador y contabilidad:
+ * - operador: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
+ * - contabilidad: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
+ * - También permite acceso a admin y superadmon
+ */
+export const OperadorContabilidadAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const token_session = req.cookies._session_token_;
 
-        if(!token_session) throw new ResponseError(401, "No se proporciono autorizacion")
+        if(!token_session) throw new ResponseError(401, "No se proporcionó autorización");
 
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
 
-        if(!decoded) if (!decoded) throw new ResponseError(401, "Token inválido");
+        if(!decoded) throw new ResponseError(401, "Token inválido");
 
         const allowedRoles = ["superadmon", "admin", "operador", "contabilidad"];
         if(!allowedRoles.includes(decoded.role)) {
@@ -26,7 +32,7 @@ export const OperadorAuth = async (req: Request, res: Response, next: NextFuncti
             company_id: decoded.company_id
         };
 
-        next()
+        next();
     } catch (error) {
         if (error instanceof ResponseError) {
             res.status(error.statusCode).json({
@@ -42,3 +48,4 @@ export const OperadorAuth = async (req: Request, res: Response, next: NextFuncti
         return;
     }
 }
+

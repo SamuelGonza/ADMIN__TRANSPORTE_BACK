@@ -9,6 +9,7 @@ import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { SessionAuth } from "@/auth/session.auth";
 import { VehicleWriteAuth } from "@/auth/vehicle-write.auth";
 import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
+import { OperadorContabilidadAuth } from "@/auth/operador-contabilidad.auth";
 
 const router: Router = Router();
 const vehiclesController = new VehiclesController();
@@ -509,7 +510,7 @@ router.put(
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/operationals", SessionAuth, vehiclesController.get_vehicle_operationals.bind(vehiclesController));
+router.get("/:vehicle_id/operationals", OperadorContabilidadAuth, vehiclesController.get_vehicle_operationals.bind(vehiclesController));
 
 // Obtener preoperacionales de un vehículo (historial)
 /**
@@ -543,7 +544,7 @@ router.get("/:vehicle_id/operationals", SessionAuth, vehiclesController.get_vehi
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/preoperationals", SessionAuth, vehiclesController.get_vehicle_preoperationals.bind(vehiclesController));
+router.get("/:vehicle_id/preoperationals", OperadorContabilidadAuth, vehiclesController.get_vehicle_preoperationals.bind(vehiclesController));
 
 // Obtener último operacional de un vehículo
 /**
@@ -571,7 +572,7 @@ router.get("/:vehicle_id/preoperationals", SessionAuth, vehiclesController.get_v
  *                 data: { type: object, nullable: true }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/last-operational", SessionAuth, vehiclesController.get_last_operational_by_vehicle.bind(vehiclesController));
+router.get("/:vehicle_id/last-operational", OperadorContabilidadAuth, vehiclesController.get_last_operational_by_vehicle.bind(vehiclesController));
 
 // Obtener último preoperacional de un vehículo
 /**
@@ -599,7 +600,7 @@ router.get("/:vehicle_id/last-operational", SessionAuth, vehiclesController.get_
  *                 data: { type: object, nullable: true }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/last-preoperational", SessionAuth, vehiclesController.get_last_preoperational_by_vehicle.bind(vehiclesController));
+router.get("/:vehicle_id/last-preoperational", OperadorContabilidadAuth, vehiclesController.get_last_preoperational_by_vehicle.bind(vehiclesController));
 
 // Obtener vehículo por ID
 /**

@@ -23,7 +23,7 @@ export const UsersReadAuth = async (req: Request, res: Response, next: NextFunct
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador", "contabilidad", "comercial"];
+        const allowedRoles = ["superadmon", "admin", "coordinador", "contabilidad", "comercial", "operador"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para consultar usuarios");
         }

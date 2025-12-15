@@ -7,6 +7,7 @@ import { OperadorAuth } from "@/auth/operador.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { ConductorAuth } from "@/auth/conductor.auth";
 import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
+import { OperadorContabilidadAuth } from "@/auth/operador-contabilidad.auth";
 
 const router: Router = Router();
 const solicitudesController = new SolicitudesController();
@@ -78,7 +79,7 @@ router.post("/client", ClienteAuth, solicitudesController.create_solicitud_clien
  *             schema:
  *               $ref: '#/components/schemas/MessageResponse'
  */
-router.post("/coordinator", GestionAuth, solicitudesController.create_solicitud_coordinator.bind(solicitudesController));
+router.post("/coordinator", OperadorContabilidadAuth, solicitudesController.create_solicitud_coordinator.bind(solicitudesController));
 
 // Obtener todas las solicitudes (coordinador+)
 /**
@@ -135,7 +136,7 @@ router.post("/coordinator", GestionAuth, solicitudesController.create_solicitud_
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/", CoordinadorAuth, solicitudesController.get_all_solicitudes.bind(solicitudesController));
+router.get("/", OperadorContabilidadAuth, solicitudesController.get_all_solicitudes.bind(solicitudesController));
 
 // #========== RUTAS DEL CLIENTE ==========#
 
@@ -424,7 +425,7 @@ router.put("/:id/assign-vehicles", CoordinadorAuth, solicitudesController.assign
  *       200:
  *         description: Solicitud
  */
-router.get("/:id", CoordinadorAuth, solicitudesController.get_solicitud_by_id.bind(solicitudesController));
+router.get("/:id", OperadorContabilidadAuth, solicitudesController.get_solicitud_by_id.bind(solicitudesController));
 
 // Descargar PDF manifiesto de pasajeros (individual)
 /**
