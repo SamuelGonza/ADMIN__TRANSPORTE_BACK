@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ficha Técnica del Conductor</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; }
+      .header { border: 2px solid #1e3a8a; padding: 10px; }
+      .row { display:flex; gap:10px; }
+      .col { flex: 1; }
+      .title { font-size: 14px; font-weight: 700; color: #1e3a8a; margin-bottom: 6px; }
+      .meta { font-size: 11px; color: #333; }
+      .meta div { margin: 2px 0; }
+      .badge { display:inline-block; padding: 2px 6px; border: 1px solid #1e3a8a; border-radius: 4px; font-weight: 700; }
+      .logo { width: 90px; height: 50px; object-fit: contain; border: 1px solid #ddd; }
+      .section { margin-top: 10px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #111; padding: 6px; vertical-align: top; }
+      th { background: #eef2ff; text-align: left; font-weight: 700; }
+      .small { font-size: 11px; color: #333; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="row">
+        <div class="col">
+          <div class="title">FICHA TÉCNICA DEL CONDUCTOR</div>
+          <div class="meta">
+            <div><span class="badge">Fecha expedición:</span> {{fecha_expedicion}}</div>
+            <div><strong>Empresa:</strong> {{company_name}}</div>
+            <div><strong>NIT:</strong> {{company_nit}}</div>
+          </div>
+        </div>
+        <div style="width: 110px; text-align: right;">
+          <img class="logo" src="{{company_logo_url}}" alt="Logo" />
+        </div>
+      </div>
+      <div class="section meta">
+        <div><strong>Nombre:</strong> {{full_name}}</div>
+        <div><strong>Documento:</strong> {{doc_type}} {{doc_number}}</div>
+        <div><strong>Teléfono:</strong> {{phone}}</div>
+        <div><strong>Email:</strong> {{email}}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <table>
+        <thead><tr><th colspan="2">Licencia de conducción</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Número</strong></td><td>{{lic_numero}}</td></tr>
+          <tr><td><strong>Categoría</strong></td><td>{{lic_categoria}}</td></tr>
+          <tr><td><strong>Estado</strong></td><td>{{lic_estado}}</td></tr>
+          <tr><td><strong>Expedición</strong></td><td>{{lic_expedicion}}</td></tr>
+          <tr><td><strong>Vencimiento</strong></td><td>{{lic_vencimiento}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <table>
+        <thead><tr><th colspan="2">Información básica</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Fecha nacimiento</strong></td><td>{{fecha_nacimiento}}</td></tr>
+          <tr><td><strong>Lugar nacimiento</strong></td><td>{{lugar_nacimiento}}</td></tr>
+          <tr><td><strong>Estado civil</strong></td><td>{{estado_civil}}</td></tr>
+          <tr><td><strong>Tipo sangre</strong></td><td>{{tipo_sangre}}</td></tr>
+          <tr><td><strong>Género</strong></td><td>{{genero}}</td></tr>
+          <tr><td><strong>Dirección</strong></td><td>{{direccion}}</td></tr>
+          <tr><td><strong>Ciudad</strong></td><td>{{ciudad}}</td></tr>
+          <tr><td><strong>Email personal</strong></td><td>{{email_personal}}</td></tr>
+        </tbody>
+      </table>
+      <div class="small" style="margin-top:6px;">* Los campos se imprimen si están registrados en el sistema.</div>
+    </div>
+  </body>
+</html>
+
+

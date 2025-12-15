@@ -8,4 +8,10 @@ export interface VehicleDocuments extends Document {
     seguro: MediaTypes;
     licencia_transito: MediaTypes;
     runt: MediaTypes;
+
+    // Vencimientos (requeridos para cumplimiento)
+    soat_vencimiento?: Date;
+    tecnomecanica_vencimiento?: Date;
+    seguro_vencimiento?: Date;
+    tarjeta_operacion_vencimiento?: Date;
 }

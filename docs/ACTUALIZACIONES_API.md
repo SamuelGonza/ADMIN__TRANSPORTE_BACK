@@ -520,3 +520,6 @@ const handleLogout = async () => {
 
 4. **El refresh** renueva la cookie automáticamente, no necesitas guardar el token manualmente.
 
+
+
+

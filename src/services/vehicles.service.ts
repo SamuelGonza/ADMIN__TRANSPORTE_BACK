@@ -12,6 +12,11 @@ import vhc_operationalModel from '@/models/vhc_operational.model';
 import { send_vehicle_created_assigned, send_preoperational_report, send_operational_bills } from '@/email/index.email';
 import companyModel from '@/models/company.model';
 import userModel from '@/models/user.model';
+import { delete_media } from '@/utils/cloudinary';
+import fs from "fs";
+import path from "path";
+import dayjs from "dayjs";
+import { renderHtmlToPdfBuffer } from "@/utils/pdf";
 export class VehicleServices {
 
     private static UserService = new UserService()
@@ -22,13 +27,16 @@ export class VehicleServices {
         try {
             const {
                 driver_id,
+                possible_drivers,
+                n_numero_interno,
                 placa,
                 name,
                 description,
                 seats,
                 type,
                 flota,
-                owner_id
+                owner_id,
+                technical_sheet
             } = payload;
 
             // Validaciones que se pueden ejecutar en paralelo
@@ -38,12 +46,7 @@ export class VehicleServices {
             ];
 
             // Agregar validaciones según el tipo de propietario
-            if (owner_id.type === "Both") {
-                validationPromises.push(
-                    VehicleServices.UserService.verify_exist_user_by_id({ id: String(owner_id.user_id) }),
-                    VehicleServices.CompanyService.verify_exist_company_by_id(String(owner_id.company_id))
-                );
-            } else if (owner_id.type === "Company") {
+            if (owner_id.type === "Company") {
                 validationPromises.push(
                     VehicleServices.CompanyService.verify_exist_company_by_id(String(owner_id.company_id))
                 );
@@ -65,6 +68,8 @@ export class VehicleServices {
             // Crear el vehículo
             const new_vehicle = await vehicleModel.create({
                 driver_id,
+                possible_drivers: possible_drivers || [],
+                n_numero_interno,
                 placa,
                 name,
                 description,
@@ -76,6 +81,7 @@ export class VehicleServices {
                     type: "img"
                 } : DEFAULT_PROFILE,
                 flota,
+                technical_sheet: technical_sheet || {},
                 owner_id,
                 created: new Date()
             });
@@ -103,7 +109,7 @@ export class VehicleServices {
                     // Buscar email de contacto de la empresa (admin o coordinador)
                     const companyContact = await userModel.findOne({
                         company_id: owner_id.company_id,
-                        role: { $in: ['admin', 'coordinador', 'superadmon'] },
+                        role: { $in: ['admin', 'coordinador', 'comercia', 'superadmon'] },
                         is_active: true,
                         is_delete: false
                     }).select('email').lean();
@@ -121,39 +127,6 @@ export class VehicleServices {
                     }
                 } else if (owner_id.type === "User") {
                     const owner = await VehicleServices.UserService.get_user_by_id({ id: String(owner_id.user_id) });
-                    await send_vehicle_created_assigned({
-                        owner_name: owner.full_name,
-                        owner_email: owner.email,
-                        placa,
-                        vehicle_name: name ?? placa,
-                        type,
-                        flota,
-                        driver_name: driver.full_name
-                    });
-                } else if (owner_id.type === "Both") {
-                    // Enviar a ambos: empresa y usuario
-                    const company = await VehicleServices.CompanyService.get_company_by({ company_id: String(owner_id.company_id) });
-                    const owner = await VehicleServices.UserService.get_user_by_id({ id: String(owner_id.user_id) });
-                    
-                    const companyContact = await userModel.findOne({
-                        company_id: owner_id.company_id,
-                        role: { $in: ['admin', 'coordinador', 'superadmon'] },
-                        is_active: true,
-                        is_delete: false
-                    }).select('email').lean();
-                    
-                    if (companyContact) {
-                        await send_vehicle_created_assigned({
-                            owner_name: company.company_name,
-                            owner_email: companyContact.email,
-                            placa,
-                            vehicle_name: name ?? placa,
-                            type,
-                            flota,
-                            driver_name: driver.full_name
-                        });
-                    }
-                    
                     await send_vehicle_created_assigned({
                         owner_name: owner.full_name,
                         owner_email: owner.email,
@@ -274,14 +247,14 @@ export class VehicleServices {
                 let company_email = "";
                 let company_name = "";
                 
-                if (vehicle.owner_id && (vehicle.owner_id as any).type === "Company" || (vehicle.owner_id as any).type === "Both") {
+                if (vehicle.owner_id && (vehicle.owner_id as any).type === "Company") {
                     const company_id = (vehicle.owner_id as any).company_id;
                     const company = await companyModel.findById(company_id).lean();
                     if (company) {
                         company_name = company.company_name;
                         const companyContact = await userModel.findOne({
                             company_id: company_id,
-                            role: { $in: ['admin', 'coordinador', 'superadmon'] },
+                            role: { $in: ['admin', 'coordinador', 'comercia', 'superadmon'] },
                             is_active: true,
                             is_delete: false
                         }).select('email').lean();
@@ -404,7 +377,7 @@ export class VehicleServices {
                 let company_email = "";
                 let company_name = "";
                 
-                if (vehicle.owner_id && ((vehicle.owner_id as any).type === "Company" || (vehicle.owner_id as any).type === "Both")) {
+                if (vehicle.owner_id && ((vehicle.owner_id as any).type === "Company")) {
                     const company_id = (vehicle.owner_id as any).company_id;
                     const company = await companyModel.findById(company_id).lean();
                     if (company) {
@@ -412,7 +385,7 @@ export class VehicleServices {
                         // Buscar contabilidad o admin/coordinador
                         const companyContact = await userModel.findOne({
                             company_id: company_id,
-                            role: { $in: ['contabilidad', 'admin', 'coordinador', 'superadmon'] },
+                            role: { $in: ['contabilidad', 'admin', 'coordinador', 'comercia', 'superadmon'] },
                             is_active: true,
                             is_delete: false
                         }).select('email').lean();
@@ -589,6 +562,7 @@ export class VehicleServices {
             const vehicle = await vehicleModel
                 .findById(id)
                 .populate('driver_id', 'full_name contact.phone')
+                .populate('possible_drivers', 'full_name contact.phone')
                 .populate('owner_id.company_id', 'company_name')
                 .populate('owner_id.user_id', 'full_name')
                 .lean();
@@ -623,6 +597,10 @@ export class VehicleServices {
                     select: 'full_name document contact email avatar role'
                 })
                 .populate({
+                    path: 'possible_drivers',
+                    select: 'full_name document contact email avatar role'
+                })
+                .populate({
                     path: 'owner_id.company_id',
                     select: 'company_name document logo'
                 })
@@ -642,13 +620,16 @@ export class VehicleServices {
             return {
                 vehicle: {
                     _id: vehicle._id,
+                    n_numero_interno: (vehicle as any).n_numero_interno,
                     placa: vehicle.placa,
                     name: vehicle.name,
                     description: vehicle.description,
                     seats: vehicle.seats,
                     type: vehicle.type,
                     flota: vehicle.flota,
-                    picture: vehicle.picture
+                    picture: vehicle.picture,
+                    technical_sheet: (vehicle as any).technical_sheet,
+                    possible_drivers: (vehicle as any).possible_drivers
                 },
                 conductor: driver ? {
                     _id: driver._id,
@@ -693,6 +674,179 @@ export class VehicleServices {
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudieron obtener los documentos del vehículo");
+        }
+    }
+
+    private resolveTemplatePath(fileName: string) {
+        const cwd = process.cwd();
+        const distPath = path.join(cwd, "dist", "email", "templates", fileName);
+        const srcPath = path.join(cwd, "src", "email", "templates", fileName);
+        if (fs.existsSync(distPath)) return distPath;
+        return srcPath;
+    }
+
+    private replaceVariables(html: string, variables: Record<string, string>): string {
+        let result = html;
+        Object.keys(variables).forEach((key) => {
+            const value = variables[key] || "";
+            result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
+        });
+        return result;
+    }
+
+    public async generate_vehicle_technical_sheet_pdf({
+        vehicle_id
+    }: {
+        vehicle_id: string;
+    }): Promise<{ filename: string; buffer: Buffer }> {
+        try {
+            const vehicle = await vehicleModel
+                .findById(vehicle_id)
+                .populate("driver_id", "full_name document contact")
+                .populate("owner_id.company_id", "company_name document logo")
+                .lean();
+
+            if (!vehicle) throw new ResponseError(404, "No se encontró el vehículo");
+
+            const docs = await vhc_documentsModel.findOne({ vehicle_id }).lean();
+
+            let company: any = (vehicle as any).owner_id?.company_id || null;
+            if (!company && (vehicle as any).owner_id?.type === "User") {
+                // fallback: empresa del conductor si existe
+                const driver = (vehicle as any).driver_id;
+                if (driver?.company_id) company = await companyModel.findById(String(driver.company_id)).lean();
+            }
+
+            const fechaExpedicion = dayjs(new Date()).format("DD/MM/YYYY HH:mm");
+            const nit = company?.document?.number
+                ? `${company.document.number}${company.document.dv ? "-" + company.document.dv : ""}`
+                : "";
+
+            const ts: any = (vehicle as any).technical_sheet || {};
+            const driver: any = (vehicle as any).driver_id || {};
+
+            const fmtDate = (d: any) => (d ? dayjs(d).format("DD/MM/YYYY") : "");
+
+            const htmlTemplate = fs.readFileSync(this.resolveTemplatePath("ficha-tecnica-vehiculo.html"), "utf8");
+            const html = this.replaceVariables(htmlTemplate, {
+                fecha_expedicion: fechaExpedicion,
+                company_name: company?.company_name || "",
+                company_nit: nit,
+                company_logo_url: company?.logo?.url || "",
+
+                vehiculo_placa: (vehicle as any).placa || "",
+                vehiculo_interno: (vehicle as any).n_numero_interno || "",
+                vehiculo_tipo: (vehicle as any).type || "",
+                vehiculo_flota: (vehicle as any).flota || "",
+                vehiculo_seats: String((vehicle as any).seats || ""),
+
+                marca: ts.marca || "",
+                modelo: ts.modelo != null ? String(ts.modelo) : "",
+                color: ts.color || "",
+                combustible: ts.tipo_combustible || "",
+
+                licencia_transito: ts.licencia_transito_numero || "",
+                linea: ts.linea || "",
+                cilindrada: ts.cilindrada_cc != null ? String(ts.cilindrada_cc) : "",
+                servicio: ts.servicio || "",
+                carroceria: ts.carroceria || "",
+                chasis: ts.numero_chasis || "",
+                fecha_matricula: fmtDate(ts.fecha_matricula),
+                tarjeta_operacion: ts.tarjeta_operacion_numero || "",
+                tarjeta_operacion_venc: fmtDate(ts.tarjeta_operacion_vencimiento || (docs as any)?.tarjeta_operacion_vencimiento),
+                titular: ts.titular_licencia || "",
+                motor: ts.numero_motor || "",
+                serie: ts.numero_serie || "",
+                importacion: ts.declaracion_importacion || "",
+
+                soat_venc: fmtDate((docs as any)?.soat_vencimiento),
+                tecnomecanica_venc: fmtDate((docs as any)?.tecnomecanica_vencimiento),
+                seguro_venc: fmtDate((docs as any)?.seguro_vencimiento),
+
+                conductor_nombre: driver.full_name || "",
+                conductor_documento: driver?.document?.number ? String(driver.document.number) : "",
+                conductor_telefono: driver?.contact?.phone || "",
+            });
+
+            const pdfBuffer = await renderHtmlToPdfBuffer(html);
+            const safePlaca = String((vehicle as any).placa || "vehiculo").replace(/[^a-zA-Z0-9_-]/g, "");
+            const filename = `ficha_tecnica_vehiculo_${safePlaca}_${dayjs().format("YYYYMMDD_HHmm")}.pdf`;
+            return { filename, buffer: pdfBuffer };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo generar la ficha técnica del vehículo");
+        }
+    }
+
+    public async update_vehicle_documents({
+        vehicle_id,
+        payload
+    }: {
+        vehicle_id: string,
+        payload: {
+            soat?: Express.Multer.File,
+            tecnomecanica?: Express.Multer.File,
+            seguro?: Express.Multer.File,
+            licencia_transito?: Express.Multer.File,
+            runt?: Express.Multer.File,
+            soat_vencimiento?: Date,
+            tecnomecanica_vencimiento?: Date,
+            seguro_vencimiento?: Date,
+            tarjeta_operacion_vencimiento?: Date
+        }
+    }) {
+        try {
+            const docs = await vhc_documentsModel.findOne({ vehicle_id });
+            if (!docs) throw new ResponseError(404, "No se encontraron documentos para este vehículo");
+
+            // Preparar borrado de archivos anteriores si se reemplazan
+            const delete_ids: string[] = [];
+            const maybePushDelete = (doc: any) => {
+                if (doc?.public_id) delete_ids.push(doc.public_id);
+            };
+
+            // Subir archivos nuevos si vienen
+            const uploads: Array<Promise<void>> = [];
+
+            const setDoc = (key: "soat" | "tecnomecanica" | "seguro" | "licencia_transito" | "runt", file?: Express.Multer.File) => {
+                if (!file) return;
+                // borrar anterior si existe
+                maybePushDelete((docs as any)[key]);
+                uploads.push((async () => {
+                    const uploaded = await upload_media({ file });
+                    (docs as any)[key] = {
+                        url: uploaded.secure_url,
+                        public_id: uploaded.public_id,
+                        type: file.mimetype.startsWith('image/') ? 'img' : 'file',
+                        original_name: file.originalname,
+                        file_extension: file.originalname.split('.').pop()
+                    };
+                })());
+            };
+
+            setDoc("soat", payload.soat);
+            setDoc("tecnomecanica", payload.tecnomecanica);
+            setDoc("seguro", payload.seguro);
+            setDoc("licencia_transito", payload.licencia_transito);
+            setDoc("runt", payload.runt);
+
+            await Promise.all(uploads);
+
+            // Actualizar vencimientos (si vienen)
+            if (payload.soat_vencimiento) (docs as any).soat_vencimiento = payload.soat_vencimiento;
+            if (payload.tecnomecanica_vencimiento) (docs as any).tecnomecanica_vencimiento = payload.tecnomecanica_vencimiento;
+            if (payload.seguro_vencimiento) (docs as any).seguro_vencimiento = payload.seguro_vencimiento;
+            if (payload.tarjeta_operacion_vencimiento) (docs as any).tarjeta_operacion_vencimiento = payload.tarjeta_operacion_vencimiento;
+
+            // Borrar medios viejos después de subir los nuevos
+            if (delete_ids.length > 0) {
+                try { await delete_media(delete_ids); } catch (e) {}
+            }
+
+            await docs.save();
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron actualizar los documentos del vehículo");
         }
     }
 
@@ -814,8 +968,7 @@ export class VehicleServices {
             const vehicleQuery: any = {};
             if (company_id) {
                 vehicleQuery.$or = [
-                    { "owner_id.type": "Company", "owner_id.company_id": company_id },
-                    { "owner_id.type": "Both", "owner_id.company_id": company_id }
+                    { "owner_id.type": "Company", "owner_id.company_id": company_id }
                 ];
             }
 
@@ -935,12 +1088,10 @@ export class VehicleServices {
     private async verify_exist_vehicle({ placa, company_id }: { placa: string, company_id: string }) {
         try {
             // Buscar vehículo con la misma placa que pertenezca a la compañía
-            // (ya sea que el tipo sea "Company" o "Both")
             const find = await vehicleModel.findOne({
                 placa,
                 $or: [
-                    { "owner_id.type": "Company", "owner_id.company_id": company_id },
-                    { "owner_id.type": "Both", "owner_id.company_id": company_id }
+                    { "owner_id.type": "Company", "owner_id.company_id": company_id }
                 ]
             });
 

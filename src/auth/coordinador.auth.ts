@@ -15,6 +15,10 @@ export const CoordinadorAuth = async (req: Request, res: Response, next: NextFun
 
         if(!decoded) if (!decoded) throw new ResponseError(401, "Token inválido");
 
+        // Acceso Operativo:
+        // - superadmon: dueños
+        // - admin: administra su empresa
+        // - coordinador: operación (asignaciones/validaciones)
         if(decoded.role != "superadmon" && decoded.role !== "admin" && decoded.role != "coordinador") throw new ResponseError(401, "No tienes permisos");
 
         (req as AuthRequest).user = {

@@ -3,21 +3,23 @@ import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
 import { TokenSessionPayload } from "@/utils/generate";
 import { NextFunction, Request, Response } from "express";
-import jwt from 'jsonwebtoken'
+import jwt from "jsonwebtoken";
 
-export const ConductorAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Acceso Comercial:
+ * - superadmon: dueños de la app
+ * - admin: administra su empresa
+ * - comercia: gestión de clientes/contratos/captación
+ */
+export const ComercialAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const token_session = req.cookies._session_token_;
-
-        if(!token_session) throw new ResponseError(401, "No se proporcionó autorización")
+        if(!token_session) throw new ResponseError(401, "No se proporcionó autorización");
 
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
-
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        // Conductores, operadores, coordinadores, admin y superadmon pueden acceder
-        // (comercia NO debe acceder a endpoints de conductor)
-        const allowedRoles = ["superadmon", "admin", "coordinador", "operador", "conductor"];
+        const allowedRoles = ["superadmon", "admin", "comercia"];
         if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
 
         (req as AuthRequest).user = {
@@ -26,22 +28,15 @@ export const ConductorAuth = async (req: Request, res: Response, next: NextFunct
             company_id: decoded.company_id
         };
 
-        next()
+        next();
     } catch (error) {
         if (error instanceof ResponseError) {
-            res.status(error.statusCode).json({
-                ok: false,
-                message: error.message
-            });
+            res.status(error.statusCode).json({ ok: false, message: error.message });
             return;
-        };
-        res.status(500).json({
-            ok: false,
-            message: "Error al autenticar al conductor"
-        });
+        }
+        res.status(500).json({ ok: false, message: "Error al autenticar al usuario" });
         return;
     }
-}
-
+};
 
 

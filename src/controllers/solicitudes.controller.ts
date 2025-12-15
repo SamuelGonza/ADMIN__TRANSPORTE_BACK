@@ -68,10 +68,12 @@ export class SolicitudesController {
             const { id } = req.params;
             const payload = req.body;
             const company_id = (req as AuthRequest).user?.company_id;
+            const accepted_by = (req as AuthRequest).user?._id;
             
             const response = await this.solicitudesService.accept_solicitud({ 
                 solicitud_id: id, 
                 company_id,
+                accepted_by,
                 payload 
             });
             res.status(200).json({
@@ -122,6 +124,146 @@ export class SolicitudesController {
             res.status(500).json({
                 ok: false,
                 message: "Error al obtener información del vehículo"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Sugerir asignación multi-vehículo (plan temporal)
+     * Body: { requested_passengers: number, preferred_seats?: number, vehicle_type?: string }
+     */
+    public async suggest_vehicle_allocation(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { requested_passengers, preferred_seats, vehicle_type } = req.body;
+            const company_id = (req as AuthRequest).user?.company_id;
+
+            const response = await this.solicitudesService.suggest_vehicle_allocation({
+                solicitud_id: id,
+                company_id,
+                requested_passengers: Number(requested_passengers),
+                preferred_seats: preferred_seats !== undefined ? Number(preferred_seats) : undefined,
+                vehicle_type
+            });
+
+            res.status(200).json({
+                message: "Sugerencia generada correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al sugerir asignación de vehículos"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Confirmar asignación multi-vehículo y persistirla en la solicitud
+     * Body: { requested_passengers: number, assignments: [{vehiculo_id, conductor_id, assigned_passengers}] }
+     */
+    public async assign_multiple_vehicles(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { requested_passengers, assignments } = req.body;
+            const company_id = (req as AuthRequest).user?.company_id;
+            const assigned_by = (req as AuthRequest).user?._id;
+
+            const response = await this.solicitudesService.assign_multiple_vehicles({
+                solicitud_id: id,
+                company_id,
+                assigned_by,
+                requested_passengers: Number(requested_passengers),
+                assignments: assignments as any
+            });
+
+            res.status(200).json({
+                message: "Asignación multi-vehículo confirmada",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al confirmar asignación multi-vehículo"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Descargar PDF de manifiesto de pasajeros (1 vehículo) para imprimir.
+     */
+    public async download_passenger_manifest_pdf(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { filename, buffer } = await this.solicitudesService.generate_passenger_manifest_pdf({
+                solicitud_id: id
+            });
+
+            res.setHeader("Content-Type", "application/pdf");
+            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            res.status(200).send(buffer);
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar el PDF"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Contabilidad: actualizar bloque contable por bus asignado (vehiculo_id)
+     */
+    public async update_assignment_accounting(req: Request, res: Response) {
+        try {
+            const { id, vehiculo_id } = req.params as any;
+            const payload = req.body;
+
+            const response = await this.solicitudesService.update_assignment_accounting({
+                solicitud_id: id,
+                vehiculo_id,
+                payload
+            });
+
+            res.status(200).json({
+                message: "Contabilidad del bus actualizada correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar contabilidad del bus"
             });
             return;
         }

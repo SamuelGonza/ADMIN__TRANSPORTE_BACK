@@ -390,6 +390,68 @@ export class VehiclesController {
         }
     }
 
+    public async update_vehicle_documents(req: Request, res: Response) {
+        try {
+            const { vehicle_id } = req.params;
+            const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+            const payload = {
+                soat: files?.soat?.[0],
+                tecnomecanica: files?.tecnomecanica?.[0],
+                seguro: files?.seguro?.[0],
+                licencia_transito: files?.licencia_transito?.[0],
+                runt: files?.runt?.[0],
+                soat_vencimiento: req.body.soat_vencimiento ? new Date(req.body.soat_vencimiento) : undefined,
+                tecnomecanica_vencimiento: req.body.tecnomecanica_vencimiento ? new Date(req.body.tecnomecanica_vencimiento) : undefined,
+                seguro_vencimiento: req.body.seguro_vencimiento ? new Date(req.body.seguro_vencimiento) : undefined,
+                tarjeta_operacion_vencimiento: req.body.tarjeta_operacion_vencimiento ? new Date(req.body.tarjeta_operacion_vencimiento) : undefined,
+            };
+
+            await this.vehicleServices.update_vehicle_documents({ vehicle_id, payload });
+            res.status(200).json({
+                message: "Documentos del vehículo actualizados correctamente"
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar documentos del vehículo"
+            });
+            return;
+        }
+    }
+
+    public async download_vehicle_technical_sheet_pdf(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { filename, buffer } = await this.vehicleServices.generate_vehicle_technical_sheet_pdf({
+                vehicle_id: id
+            });
+            res.setHeader("Content-Type", "application/pdf");
+            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            res.status(200).send(buffer);
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar ficha técnica del vehículo"
+            });
+            return;
+        }
+    }
+
     public async get_vehicle_operationals(req: Request, res: Response) {
         try {
             const { vehicle_id } = req.params;

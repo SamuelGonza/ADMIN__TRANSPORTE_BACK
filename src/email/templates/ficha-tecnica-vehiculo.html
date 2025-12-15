@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ficha Técnica del Vehículo</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; }
+      .header { border: 2px solid #1e3a8a; padding: 10px; }
+      .row { display:flex; gap:10px; }
+      .col { flex: 1; }
+      .title { font-size: 14px; font-weight: 700; color: #1e3a8a; margin-bottom: 6px; }
+      .meta { font-size: 11px; color: #333; }
+      .meta div { margin: 2px 0; }
+      .badge { display:inline-block; padding: 2px 6px; border: 1px solid #1e3a8a; border-radius: 4px; font-weight: 700; }
+      .logo { width: 90px; height: 50px; object-fit: contain; border: 1px solid #ddd; }
+      .section { margin-top: 10px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #111; padding: 6px; vertical-align: top; }
+      th { background: #eef2ff; text-align: left; font-weight: 700; }
+      .footer { margin-top: 14px; border: 2px solid #1e3a8a; padding: 10px; }
+      .small { font-size: 11px; color: #333; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="row">
+        <div class="col">
+          <div class="title">FICHA TÉCNICA DEL VEHÍCULO</div>
+          <div class="meta">
+            <div><span class="badge">Fecha expedición:</span> {{fecha_expedicion}}</div>
+            <div><strong>Empresa:</strong> {{company_name}}</div>
+            <div><strong>NIT:</strong> {{company_nit}}</div>
+          </div>
+        </div>
+        <div style="width: 110px; text-align: right;">
+          <img class="logo" src="{{company_logo_url}}" alt="Logo" />
+        </div>
+      </div>
+      <div class="section meta">
+        <div class="row">
+          <div class="col">
+            <div><strong>Placa:</strong> {{vehiculo_placa}}</div>
+            <div><strong>N° Interno:</strong> {{vehiculo_interno}}</div>
+            <div><strong>Tipo:</strong> {{vehiculo_tipo}}</div>
+            <div><strong>Flota:</strong> {{vehiculo_flota}}</div>
+            <div><strong>Capacidad:</strong> {{vehiculo_seats}} pasajeros</div>
+          </div>
+          <div class="col">
+            <div><strong>Marca:</strong> {{marca}}</div>
+            <div><strong>Modelo:</strong> {{modelo}}</div>
+            <div><strong>Color:</strong> {{color}}</div>
+            <div><strong>Combustible:</strong> {{combustible}}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <table>
+        <thead>
+          <tr><th colspan="2">Información legal / técnica</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Licencia de tránsito (No)</strong></td><td>{{licencia_transito}}</td></tr>
+          <tr><td><strong>Línea</strong></td><td>{{linea}}</td></tr>
+          <tr><td><strong>Cilindrada (CC)</strong></td><td>{{cilindrada}}</td></tr>
+          <tr><td><strong>Servicio</strong></td><td>{{servicio}}</td></tr>
+          <tr><td><strong>Carrocería</strong></td><td>{{carroceria}}</td></tr>
+          <tr><td><strong>N° Chasis</strong></td><td>{{chasis}}</td></tr>
+          <tr><td><strong>Fecha matrícula</strong></td><td>{{fecha_matricula}}</td></tr>
+          <tr><td><strong>Tarjeta operación (No)</strong></td><td>{{tarjeta_operacion}}</td></tr>
+          <tr><td><strong>Venc. Tarjeta operación</strong></td><td>{{tarjeta_operacion_venc}}</td></tr>
+          <tr><td><strong>Titular licencia</strong></td><td>{{titular}}</td></tr>
+          <tr><td><strong>N° Motor</strong></td><td>{{motor}}</td></tr>
+          <tr><td><strong>N° Serie</strong></td><td>{{serie}}</td></tr>
+          <tr><td><strong>Declaración importación</strong></td><td>{{importacion}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <table>
+        <thead>
+          <tr><th colspan="2">Vencimientos documentales</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>SOAT</strong></td><td>{{soat_venc}}</td></tr>
+          <tr><td><strong>Tecnomecánica</strong></td><td>{{tecnomecanica_venc}}</td></tr>
+          <tr><td><strong>Seguro</strong></td><td>{{seguro_venc}}</td></tr>
+        </tbody>
+      </table>
+      <div class="small" style="margin-top:6px;">* Los vencimientos se imprimen si están registrados en el sistema.</div>
+    </div>
+
+    <div class="footer">
+      <div class="title" style="margin:0 0 4px 0;">Conductor asignado</div>
+      <div class="meta">
+        <div><strong>Nombre:</strong> {{conductor_nombre}}</div>
+        <div><strong>Documento:</strong> {{conductor_documento}}</div>
+        <div><strong>Teléfono:</strong> {{conductor_telefono}}</div>
+      </div>
+    </div>
+  </body>
+</html>
+
+

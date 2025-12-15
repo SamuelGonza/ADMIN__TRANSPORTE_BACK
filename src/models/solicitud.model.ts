@@ -21,6 +21,15 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     origen: { type: String, required: true }, // ORIGEN
     destino: { type: String, required: true }, // DESTINO
     novedades: { type: String, default: "" }, // NOVEDADES
+    origen_location_id: { type: MongoIdRef, ref: "Location", required: false },
+    destino_location_id: { type: MongoIdRef, ref: "Location", required: false },
+
+    // Estimación de precio (según contrato/tarifario)
+    estimated_km: { type: Number, required: false },
+    estimated_hours: { type: Number, required: false },
+    pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "tarifa_amva"] },
+    pricing_rate: { type: Number, required: false },
+    estimated_price: { type: Number, required: false },
 
     // Vehículo y conductor
     vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: true }, // Referencia al vehículo
@@ -30,6 +39,66 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     flota: { type: String, required: true }, // FLOTA
     conductor: { type: MongoIdRef, ref: "User", required: true }, // CONDUCTOR
     conductor_phone: { type: String, required: true }, // Teléfono del conductor
+
+    // Multi-vehículo (cuando se requieren varios buses)
+    requested_passengers: { type: Number, required: false },
+    vehicle_assignments: {
+        type: [
+            new Schema(
+                {
+                    vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: true },
+                    placa: { type: String, required: true },
+                    seats: { type: Number, required: true },
+                    assigned_passengers: { type: Number, required: true },
+                    conductor_id: { type: MongoIdRef, ref: "User", required: true },
+                    conductor_phone: { type: String, required: false },
+
+                    // "Contrato" por bus
+                    contract_id: { type: MongoIdRef, ref: "Contract", required: false },
+                    contract_charge_mode: { type: String, required: false, enum: ["within_contract", "outside_contract", "no_contract"], default: "no_contract" },
+                    contract_charge_amount: { type: Number, required: false, default: 0 },
+
+                    // Control contable por bus (opcional)
+                    accounting: {
+                        prefactura: {
+                            numero: { type: String, required: false },
+                            fecha: { type: Date, required: false }
+                        },
+                        preliquidacion: {
+                            numero: { type: String, required: false },
+                            fecha: { type: Date, required: false }
+                        },
+                        factura: {
+                            numero: { type: String, required: false },
+                            fecha: { type: Date, required: false }
+                        },
+                        doc_equivalente: {
+                            numero: { type: String, required: false },
+                            fecha: { type: Date, required: false }
+                        },
+                        pagos: {
+                            type: [
+                                new Schema(
+                                    {
+                                        fecha: { type: Date, required: false },
+                                        valor: { type: Number, required: false },
+                                        referencia: { type: String, required: false }
+                                    },
+                                    { _id: false }
+                                )
+                            ],
+                            required: false,
+                            default: []
+                        },
+                        notas: { type: String, required: false }
+                    }
+                },
+                { _id: false }
+            )
+        ],
+        required: false,
+        default: []
+    },
 
     // Información financiera - Gastos
     nombre_cuenta_cobro: { type: String, required: true }, // NOMBRE CUENTA DE COBRO
@@ -46,6 +115,11 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     // Utilidad
     utilidad: { type: Number, required: true, default: 0 }, // UTILIDAD (valor)
     porcentaje_utilidad: { type: Number, required: true, default: 0 }, // % (porcentaje de utilidad)
+
+    // Contratos (presupuesto/consumo)
+    contract_id: { type: MongoIdRef, ref: "Contract", required: false },
+    contract_charge_mode: { type: String, required: false, enum: ["within_contract", "outside_contract", "no_contract"], default: "no_contract" },
+    contract_charge_amount: { type: Number, required: false, default: 0 },
 
     // Metadata
     created: { type: Date, default: new Date() },

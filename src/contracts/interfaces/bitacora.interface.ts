@@ -27,6 +27,15 @@ export interface BitacoraSolicitud extends Document {
     origen: string; // ORIGEN
     destino: string; // DESTINO
     novedades: string; // NOVEDADES
+    origen_location_id?: ObjectId;
+    destino_location_id?: ObjectId;
+
+    // Estimación de precio (según contrato/tarifario)
+    estimated_km?: number;
+    estimated_hours?: number;
+    pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva";
+    pricing_rate?: number;
+    estimated_price?: number;
 
     // Vehículo y conductor
     vehiculo_id: ObjectId; // Referencia al vehículo (permite populate)
@@ -36,6 +45,32 @@ export interface BitacoraSolicitud extends Document {
     flota: VehicleFlota | string; // FLOTA (denormalizado para reportes)
     conductor: ObjectId; // CONDUCTOR (referencia al usuario)
     conductor_phone: string; // Teléfono del conductor (denormalizado)
+
+    // Multi-vehículo (cuando un servicio requiere varios buses)
+    requested_passengers?: number; // total requerido (ej. 200)
+    vehicle_assignments?: Array<{
+        vehiculo_id: ObjectId;
+        placa: string;
+        seats: number;
+        assigned_passengers: number;
+        conductor_id: ObjectId;
+        conductor_phone?: string;
+
+        // "Contrato" por bus (cada bus es una línea independiente de control)
+        contract_id?: ObjectId;
+        contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
+        contract_charge_amount?: number;
+
+        // Control contable por bus (opcional)
+        accounting?: {
+            prefactura?: { numero?: string; fecha?: Date };
+            preliquidacion?: { numero?: string; fecha?: Date };
+            factura?: { numero?: string; fecha?: Date };
+            doc_equivalente?: { numero?: string; fecha?: Date };
+            pagos?: Array<{ fecha?: Date; valor?: number; referencia?: string }>;
+            notas?: string;
+        };
+    }>;
 
     // Información financiera - Gastos
     nombre_cuenta_cobro: string; // NOMBRE CUENTA DE COBRO
@@ -52,6 +87,11 @@ export interface BitacoraSolicitud extends Document {
     // Utilidad
     utilidad: number; // UTILIDAD (valor)
     porcentaje_utilidad: number; // % (porcentaje de utilidad)
+
+    // Contratos (presupuesto/consumo)
+    contract_id?: ObjectId;
+    contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
+    contract_charge_amount?: number;
 
     // Metadata
     created: Date;

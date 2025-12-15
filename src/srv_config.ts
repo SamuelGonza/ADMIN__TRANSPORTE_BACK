@@ -6,12 +6,17 @@ import cookieParser from "cookie-parser";
 
 import { GLOBAL_ENV, ALLOWED_ORIGINS, ALLOWED_METHODS } from "@/utils/constants";
 
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "@/swagger";
+
 // Importar rutas
 import usersRouter from "@/routes/users.routes";
 import companyRouter from "@/routes/company.routes";
 import clientRouter from "@/routes/client.routes";
 import solicitudesRouter from "@/routes/solicitudes.routes";
 import vehiclesRouter from "@/routes/vehicles.routes";
+import contractsRouter from "@/routes/contracts.routes";
+import locationsRouter from "@/routes/locations.routes";
 
 // Configuración CORS con orígenes permitidos
 const corsOptions: CorsOptions = {
@@ -50,6 +55,22 @@ app.use(morgan("dev"));
 
 
 // #======== ROUTES ========#
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Health check
+ *     description: Verifica que el servidor está arriba y devuelve timestamp + IP.
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ */
 app.get(`${GLOBAL_ENV.ROUTER_SUBFIJE}/health`, (req: Request, res: Response) => {   
     console.log('🏥 Health check recibido desde:', req.ip);
     res.status(200).json({
@@ -61,10 +82,13 @@ app.get(`${GLOBAL_ENV.ROUTER_SUBFIJE}/health`, (req: Request, res: Response) => 
 });
 
 // Documentación Swagger
-// app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/docs`, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-//     customCss: '.swagger-ui .topbar { display: none }',
-//     customSiteTitle: "CIMARRONA API - Documentación"
-// }));
+app.get(`${GLOBAL_ENV.ROUTER_SUBFIJE}/docs.json`, (req: Request, res: Response) => {
+    res.status(200).json(swaggerSpec);
+});
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/docs`, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "ADMIN TRANSPORTE API - Documentación"
+}));
 
 // Rutas de la API
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/users`, usersRouter);
@@ -72,6 +96,8 @@ app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/companies`, companyRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/clients`, clientRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/solicitudes`, solicitudesRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/vehicles`, vehiclesRouter);
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/contracts`, contractsRouter);
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/locations`, locationsRouter);
 
 // Manejo de rutas no encontradas (debe ir al final)
 app.use((req: Request, res: Response) => {

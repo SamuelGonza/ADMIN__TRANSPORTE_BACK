@@ -350,3 +350,6 @@ const VehiclePreview = ({ data }) => {
 4. **Conductor automático** - Se asigna según el vehículo
 5. **Información completa** - Propietario incluido en la respuesta
 
+
+
+

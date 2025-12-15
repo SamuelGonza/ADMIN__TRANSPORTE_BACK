@@ -6,6 +6,13 @@ import { AuthRequest } from "@/utils/express";
 export class UsersController {
     private userService = new UserService();
 
+    private parseDate(value: any): Date | undefined {
+        if (!value) return undefined;
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return undefined;
+        return d;
+    }
+
     public async register_user(req: Request, res: Response) {
         try {
             const user_company_id = (req as AuthRequest).user?.company_id;
@@ -63,6 +70,9 @@ export class UsersController {
             const role = (req as AuthRequest).user?.role;
             // If user is driver, use their ID. Else use body.driver_id (admin uploading for driver)
             const driver_id = (role === 'conductor' && user_id) ? user_id : req.body.driver_id;
+            const licencia_conduccion_categoria = req.body.licencia_conduccion_categoria;
+            const licencia_conduccion_vencimiento = req.body.licencia_conduccion_vencimiento ? new Date(req.body.licencia_conduccion_vencimiento) : undefined;
+            const seguridad_social_vencimiento = req.body.seguridad_social_vencimiento ? new Date(req.body.seguridad_social_vencimiento) : undefined;
             
             const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
             if (!files) throw new Error("No files uploaded");
@@ -79,7 +89,10 @@ export class UsersController {
             await this.userService.upload_driver_documents({
                 document,
                 licencia_conduccion,
-                driver_id
+                driver_id,
+                licencia_conduccion_categoria,
+                licencia_conduccion_vencimiento,
+                seguridad_social_vencimiento
             });
             res.status(200).json({
                 message: "Documentos subidos correctamente"
@@ -360,6 +373,9 @@ export class UsersController {
             const user_id = (req as AuthRequest).user?._id;
             const role = (req as AuthRequest).user?.role;
             const { driver_id } = req.params;
+            const licencia_conduccion_categoria = req.body.licencia_conduccion_categoria;
+            const licencia_conduccion_vencimiento = req.body.licencia_conduccion_vencimiento ? new Date(req.body.licencia_conduccion_vencimiento) : undefined;
+            const seguridad_social_vencimiento = req.body.seguridad_social_vencimiento ? new Date(req.body.seguridad_social_vencimiento) : undefined;
             
             // If user is driver, ignore params driver_id and use their own
             const target_driver_id = (role === 'conductor' && user_id) ? user_id : driver_id;
@@ -379,7 +395,10 @@ export class UsersController {
             await this.userService.update_driver_documents({
                 document,
                 licencia_conduccion,
-                driver_id: target_driver_id
+                driver_id: target_driver_id,
+                licencia_conduccion_categoria,
+                licencia_conduccion_vencimiento,
+                seguridad_social_vencimiento
             });
             res.status(200).json({
                 message: "Documentos actualizados correctamente"
@@ -395,6 +414,142 @@ export class UsersController {
             res.status(500).json({
                 ok: false,
                 message: "Error al actualizar documentos"
+            });
+            return;
+        }
+    }
+
+    public async get_driver_documents(req: Request, res: Response) {
+        try {
+            const user_id = (req as AuthRequest).user?._id;
+            const role = (req as AuthRequest).user?.role;
+            const { driver_id } = req.params;
+            const target_driver_id = (role === 'conductor' && user_id) ? user_id : driver_id;
+
+            const docs = await this.userService.get_driver_documents({ driver_id: target_driver_id });
+            res.status(200).json({
+                message: "Documentos del conductor obtenidos correctamente",
+                data: docs
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener documentos del conductor"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Actualiza el "perfil legal" del conductor (campos de la segunda imagen)
+     * NOTA: Este endpoint es JSON (sin archivos).
+     */
+    public async update_driver_profile(req: Request, res: Response) {
+        try {
+            const user_id = (req as AuthRequest).user?._id;
+            const role = (req as AuthRequest).user?.role;
+            const { driver_id } = req.params;
+            const target_driver_id = (role === 'conductor' && user_id) ? user_id : driver_id;
+
+            const body = req.body || {};
+
+            // Normalizar fechas conocidas (top-level)
+            const payload: any = {
+                ...body,
+                licencia_conduccion_expedicion: this.parseDate(body.licencia_conduccion_expedicion),
+                licencia_conduccion_vencimiento: this.parseDate(body.licencia_conduccion_vencimiento),
+                fecha_nacimiento: this.parseDate(body.fecha_nacimiento),
+                fecha_vinculacion: this.parseDate(body.fecha_vinculacion),
+            };
+
+            // Normalizar fechas en SST (si viene)
+            if (body.sst) {
+                const sst = { ...body.sst };
+                const normalizeItem = (item: any) => item ? ({ ...item, cobertura: this.parseDate(item.cobertura) }) : item;
+                sst.eps = normalizeItem(sst.eps);
+                sst.arl = normalizeItem(sst.arl);
+                sst.riesgos_profesionales = normalizeItem(sst.riesgos_profesionales);
+                sst.fondo_pensiones = normalizeItem(sst.fondo_pensiones);
+                sst.caja_compensacion = normalizeItem(sst.caja_compensacion);
+                payload.sst = sst;
+            }
+
+            // Normalizar fechas en IPS examen médico (si viene)
+            if (body.ips_examen_medico) {
+                payload.ips_examen_medico = {
+                    ...body.ips_examen_medico,
+                    fecha_ultimo_examen: this.parseDate(body.ips_examen_medico.fecha_ultimo_examen),
+                    fecha_vencimiento_examen: this.parseDate(body.ips_examen_medico.fecha_vencimiento_examen),
+                    fecha_vencimiento_recomendaciones: this.parseDate(body.ips_examen_medico.fecha_vencimiento_recomendaciones),
+                };
+            }
+
+            // Normalizar fechas en Inducción (si viene)
+            if (body.induccion) {
+                payload.induccion = {
+                    ...body.induccion,
+                    fecha_induccion: this.parseDate(body.induccion.fecha_induccion),
+                    fecha_reinduccion: this.parseDate(body.induccion.fecha_reinduccion),
+                };
+            }
+
+            const updated = await this.userService.update_driver_profile({
+                driver_id: target_driver_id,
+                payload
+            });
+
+            res.status(200).json({
+                message: "Perfil del conductor actualizado correctamente",
+                data: updated
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar perfil del conductor"
+            });
+            return;
+        }
+    }
+
+    public async download_driver_technical_sheet_pdf(req: Request, res: Response) {
+        try {
+            const user_id = (req as AuthRequest).user?._id;
+            const role = (req as AuthRequest).user?.role;
+            const { driver_id } = req.params;
+            const target_driver_id = (role === 'conductor' && user_id) ? user_id : driver_id;
+
+            const { filename, buffer } = await this.userService.generate_driver_technical_sheet_pdf({
+                driver_id: target_driver_id
+            });
+
+            res.setHeader("Content-Type", "application/pdf");
+            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            res.status(200).send(buffer);
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar ficha técnica del conductor"
             });
             return;
         }

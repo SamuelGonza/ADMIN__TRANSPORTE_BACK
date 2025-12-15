@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manifiesto de Pasajeros</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; }
+      .header { border: 2px solid #1e3a8a; padding: 10px; }
+      .row { display: flex; gap: 10px; }
+      .col { flex: 1; }
+      .title { font-size: 14px; font-weight: 700; color: #1e3a8a; margin-bottom: 6px; }
+      .meta { font-size: 11px; color: #333; }
+      .meta div { margin: 2px 0; }
+      .badge { display:inline-block; padding: 2px 6px; border: 1px solid #1e3a8a; border-radius: 4px; font-weight: 700; }
+      .logo { width: 90px; height: 50px; object-fit: contain; border: 1px solid #ddd; }
+
+      .section { margin-top: 10px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #111; padding: 6px; vertical-align: middle; }
+      th { background: #eef2ff; text-align: left; font-weight: 700; }
+      .idx { width: 32px; text-align: center; }
+      .firma { width: 120px; }
+
+      .footer { margin-top: 14px; border: 2px solid #1e3a8a; padding: 10px; }
+      .sign-line { margin-top: 14px; border-top: 1px solid #111; width: 60%; }
+      .small { font-size: 11px; color: #333; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="row">
+        <div class="col">
+          <div class="title">MANIFIESTO DE PASAJEROS</div>
+          <div class="meta">
+            <div><span class="badge">Fecha expedición:</span> {{fecha_expedicion}}</div>
+            <div><strong>Empresa transportadora:</strong> {{company_name}}</div>
+            <div><strong>NIT:</strong> {{company_nit}}</div>
+          </div>
+        </div>
+        <div style="width: 110px; text-align: right;">
+          <img class="logo" src="{{company_logo_url}}" alt="Logo" />
+        </div>
+      </div>
+
+      <div class="section meta">
+        <div class="row">
+          <div class="col">
+            <div><strong>Vehículo:</strong> Placa {{vehiculo_placa}} | Interno {{vehiculo_interno}} | Modelo {{vehiculo_modelo}}</div>
+            <div><strong>Capacidad:</strong> {{vehiculo_seats}} pasajeros</div>
+          </div>
+          <div class="col">
+            <div><strong>Conductor asignado:</strong> {{conductor_nombre}}</div>
+            <div><strong>Documento:</strong> {{conductor_documento}}</div>
+            <div><strong>Teléfono:</strong> {{conductor_telefono}}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <table>
+        <thead>
+          <tr>
+            <th class="idx">#</th>
+            <th>Nombre completo</th>
+            <th>Teléfono</th>
+            <th>Documento</th>
+            <th class="firma">Firma</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{rows}}
+        </tbody>
+      </table>
+      <div class="small" style="margin-top:6px;">
+        Nota: La tabla contiene {{vehiculo_seats}} filas (una por cada cupo del vehículo).
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="title" style="margin:0 0 4px 0;">FIRMA DEL CONDUCTOR</div>
+      <div class="meta">
+        <div><strong>Nombre:</strong> {{conductor_nombre}}</div>
+        <div><strong>Documento:</strong> {{conductor_documento}}</div>
+      </div>
+      <div class="sign-line"></div>
+      <div class="small">Firma</div>
+    </div>
+  </body>
+</html>
+
+

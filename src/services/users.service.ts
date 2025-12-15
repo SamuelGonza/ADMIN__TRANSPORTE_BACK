@@ -7,6 +7,11 @@ import { compare_password, generate_numbers, generate_password, generate_token_s
 import { delete_media, upload_media } from '@/utils/cloudinary';
 import { DEFAULT_PROFILE } from '@/utils/constants';
 import { send_user_credentials, send_user_verification_otp, send_user_password_reset_otp } from '@/email/index.email';
+import fs from "fs";
+import path from "path";
+import dayjs from "dayjs";
+import companyModel from "@/models/company.model";
+import { renderHtmlToPdfBuffer } from "@/utils/pdf";
 
 export class UserService {
     private static _companyService: import("./company.service").CompanyService | null = null;
@@ -126,7 +131,21 @@ export class UserService {
         }
     }
 
-    public async upload_driver_documents({ document, licencia_conduccion, driver_id }: { document: { back: Express.Multer.File, front: Express.Multer.File }, licencia_conduccion: { back: Express.Multer.File, front: Express.Multer.File }, driver_id: string }) {
+    public async upload_driver_documents({
+        document,
+        licencia_conduccion,
+        driver_id,
+        licencia_conduccion_categoria,
+        licencia_conduccion_vencimiento,
+        seguridad_social_vencimiento
+    }: {
+        document: { back: Express.Multer.File, front: Express.Multer.File },
+        licencia_conduccion: { back: Express.Multer.File, front: Express.Multer.File },
+        driver_id: string,
+        licencia_conduccion_categoria?: string,
+        licencia_conduccion_vencimiento?: Date,
+        seguridad_social_vencimiento?: Date
+    }) {
         try {
             const find_driver_documents = await driver_documentsModel.findOne({ driver_id });
             if (!find_driver_documents) throw new ResponseError(404, "No pudimos obtener los documentos")
@@ -172,6 +191,11 @@ export class UserService {
                     original_name: `licencia_trasera_${Date.now()}`
                 },
             }
+
+            // Metadatos legales
+            if (licencia_conduccion_categoria) (find_driver_documents as any).licencia_conduccion_categoria = licencia_conduccion_categoria;
+            if (licencia_conduccion_vencimiento) (find_driver_documents as any).licencia_conduccion_vencimiento = licencia_conduccion_vencimiento;
+            if (seguridad_social_vencimiento) (find_driver_documents as any).seguridad_social_vencimiento = seguridad_social_vencimiento;
 
             await find_driver_documents.save()
 
@@ -475,7 +499,21 @@ export class UserService {
         }
     }
 
-    public async update_driver_documents({ document, licencia_conduccion, driver_id }: { document: { back: Express.Multer.File, front: Express.Multer.File }, licencia_conduccion: { back: Express.Multer.File, front: Express.Multer.File }, driver_id: string }) {
+    public async update_driver_documents({
+        document,
+        licencia_conduccion,
+        driver_id,
+        licencia_conduccion_categoria,
+        licencia_conduccion_vencimiento,
+        seguridad_social_vencimiento
+    }: {
+        document: { back: Express.Multer.File, front: Express.Multer.File },
+        licencia_conduccion: { back: Express.Multer.File, front: Express.Multer.File },
+        driver_id: string,
+        licencia_conduccion_categoria?: string,
+        licencia_conduccion_vencimiento?: Date,
+        seguridad_social_vencimiento?: Date
+    }) {
         try {
             const find_driver_documents = await driver_documentsModel.findOne({ driver_id });
             if (!find_driver_documents) throw new ResponseError(404, "No pudimos obtener los documentos")
@@ -531,11 +569,169 @@ export class UserService {
                 },
             }
 
+            // Metadatos legales
+            if (licencia_conduccion_categoria) (find_driver_documents as any).licencia_conduccion_categoria = licencia_conduccion_categoria;
+            if (licencia_conduccion_vencimiento) (find_driver_documents as any).licencia_conduccion_vencimiento = licencia_conduccion_vencimiento;
+            if (seguridad_social_vencimiento) (find_driver_documents as any).seguridad_social_vencimiento = seguridad_social_vencimiento;
+
             await find_driver_documents.save()
 
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se actualizar los archivos")
+        }
+    }
+
+    public async get_driver_documents({ driver_id }: { driver_id: string }) {
+        try {
+            const docs = await driver_documentsModel
+                .findOne({ driver_id })
+                .populate("driver_id", "full_name document contact email role")
+                .lean();
+            if (!docs) throw new ResponseError(404, "No pudimos obtener los documentos");
+            return docs;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron obtener los documentos del conductor");
+        }
+    }
+
+    public async update_driver_profile({
+        driver_id,
+        payload
+    }: {
+        driver_id: string;
+        payload: any;
+    }) {
+        try {
+            const docs = await driver_documentsModel.findOne({ driver_id });
+            if (!docs) throw new ResponseError(404, "No pudimos obtener los documentos");
+
+            // Licencia
+            if (payload.licencia_conduccion_numero !== undefined) (docs as any).licencia_conduccion_numero = payload.licencia_conduccion_numero;
+            if (payload.licencia_conduccion_categoria !== undefined) (docs as any).licencia_conduccion_categoria = payload.licencia_conduccion_categoria;
+            if (payload.licencia_conduccion_estado !== undefined) (docs as any).licencia_conduccion_estado = payload.licencia_conduccion_estado;
+            if (payload.licencia_conduccion_expedicion !== undefined) (docs as any).licencia_conduccion_expedicion = payload.licencia_conduccion_expedicion;
+            if (payload.licencia_conduccion_vencimiento !== undefined) (docs as any).licencia_conduccion_vencimiento = payload.licencia_conduccion_vencimiento;
+
+            // Básico
+            if (payload.lugar_expedicion_documento !== undefined) (docs as any).lugar_expedicion_documento = payload.lugar_expedicion_documento;
+            if (payload.fecha_nacimiento !== undefined) (docs as any).fecha_nacimiento = payload.fecha_nacimiento;
+            if (payload.lugar_nacimiento !== undefined) (docs as any).lugar_nacimiento = payload.lugar_nacimiento;
+            if (payload.estado_civil !== undefined) (docs as any).estado_civil = payload.estado_civil;
+            if (payload.tipo_sangre !== undefined) (docs as any).tipo_sangre = payload.tipo_sangre;
+            if (payload.genero !== undefined) (docs as any).genero = payload.genero;
+            if (payload.direccion !== undefined) (docs as any).direccion = payload.direccion;
+            if (payload.barrio !== undefined) (docs as any).barrio = payload.barrio;
+            if (payload.ciudad !== undefined) (docs as any).ciudad = payload.ciudad;
+            if (payload.telefono !== undefined) (docs as any).telefono = payload.telefono;
+            if (payload.telefono_celular !== undefined) (docs as any).telefono_celular = payload.telefono_celular;
+            if (payload.email_personal !== undefined) (docs as any).email_personal = payload.email_personal;
+
+            // Bancario
+            if (payload.entidad_bancaria !== undefined) (docs as any).entidad_bancaria = payload.entidad_bancaria;
+            if (payload.tipo_cuenta !== undefined) (docs as any).tipo_cuenta = payload.tipo_cuenta;
+            if (payload.cuenta_numero !== undefined) (docs as any).cuenta_numero = payload.cuenta_numero;
+
+            // Laboral
+            if (payload.empresa_contratante !== undefined) (docs as any).empresa_contratante = payload.empresa_contratante;
+            if (payload.tipo_contrato !== undefined) (docs as any).tipo_contrato = payload.tipo_contrato;
+            if (payload.condicion_empresa !== undefined) (docs as any).condicion_empresa = payload.condicion_empresa;
+            if (payload.fecha_vinculacion !== undefined) (docs as any).fecha_vinculacion = payload.fecha_vinculacion;
+            if (payload.cargo_asignado !== undefined) (docs as any).cargo_asignado = payload.cargo_asignado;
+            if (payload.lugar_trabajo !== undefined) (docs as any).lugar_trabajo = payload.lugar_trabajo;
+            if (payload.proceso_asignado !== undefined) (docs as any).proceso_asignado = payload.proceso_asignado;
+
+            // SST
+            if (payload.sst !== undefined) (docs as any).sst = payload.sst;
+
+            // IPS examen médico
+            if (payload.ips_examen_medico !== undefined) (docs as any).ips_examen_medico = payload.ips_examen_medico;
+
+            // Inducción
+            if (payload.induccion !== undefined) (docs as any).induccion = payload.induccion;
+
+            await docs.save();
+            return docs.toObject();
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo actualizar el perfil del conductor");
+        }
+    }
+
+    private resolveTemplatePath(fileName: string) {
+        const cwd = process.cwd();
+        const distPath = path.join(cwd, "dist", "email", "templates", fileName);
+        const srcPath = path.join(cwd, "src", "email", "templates", fileName);
+        if (fs.existsSync(distPath)) return distPath;
+        return srcPath;
+    }
+
+    private replaceVariables(html: string, variables: Record<string, string>): string {
+        let result = html;
+        Object.keys(variables).forEach((key) => {
+            const value = variables[key] || "";
+            result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
+        });
+        return result;
+    }
+
+    public async generate_driver_technical_sheet_pdf({
+        driver_id
+    }: {
+        driver_id: string;
+    }): Promise<{ filename: string; buffer: Buffer }> {
+        try {
+            const user = await userModel.findById(driver_id).select("full_name document contact email company_id").lean();
+            if (!user) throw new ResponseError(404, "Conductor no encontrado");
+
+            const docs = await driver_documentsModel.findOne({ driver_id }).lean();
+            if (!docs) throw new ResponseError(404, "Documentos del conductor no encontrados");
+
+            const company = user.company_id ? await companyModel.findById(String(user.company_id)).lean() : null;
+            const fechaExpedicion = dayjs(new Date()).format("DD/MM/YYYY HH:mm");
+            const nit = company?.document?.number
+                ? `${company.document.number}${company.document.dv ? "-" + company.document.dv : ""}`
+                : "";
+
+            const fmtDate = (d: any) => (d ? dayjs(d).format("DD/MM/YYYY") : "");
+
+            const htmlTemplate = fs.readFileSync(this.resolveTemplatePath("ficha-tecnica-conductor.html"), "utf8");
+            const html = this.replaceVariables(htmlTemplate, {
+                fecha_expedicion: fechaExpedicion,
+                company_name: company?.company_name || "",
+                company_nit: nit,
+                company_logo_url: company?.logo?.url || "",
+
+                full_name: user.full_name || "",
+                doc_type: (user as any)?.document?.type ? String((user as any).document.type).toUpperCase() : "",
+                doc_number: (user as any)?.document?.number ? String((user as any).document.number) : "",
+                phone: (user as any)?.contact?.phone || "",
+                email: (user as any)?.email || "",
+
+                lic_numero: (docs as any).licencia_conduccion_numero || "",
+                lic_categoria: (docs as any).licencia_conduccion_categoria || "",
+                lic_estado: (docs as any).licencia_conduccion_estado || "",
+                lic_expedicion: fmtDate((docs as any).licencia_conduccion_expedicion),
+                lic_vencimiento: fmtDate((docs as any).licencia_conduccion_vencimiento),
+
+                fecha_nacimiento: fmtDate((docs as any).fecha_nacimiento),
+                lugar_nacimiento: (docs as any).lugar_nacimiento || "",
+                estado_civil: (docs as any).estado_civil || "",
+                tipo_sangre: (docs as any).tipo_sangre || "",
+                genero: (docs as any).genero || "",
+                direccion: (docs as any).direccion || "",
+                ciudad: (docs as any).ciudad || "",
+                email_personal: (docs as any).email_personal || "",
+            });
+
+            const pdfBuffer = await renderHtmlToPdfBuffer(html);
+            const safeDoc = (user as any)?.document?.number ? String((user as any).document.number) : "conductor";
+            const filename = `ficha_tecnica_conductor_${safeDoc}_${dayjs().format("YYYYMMDD_HHmm")}.pdf`;
+            return { filename, buffer: pdfBuffer };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo generar la ficha técnica del conductor");
         }
     }
 

@@ -9,6 +9,10 @@ const VehicleDocumentsSchema: Schema = new Schema<VehicleDocuments>({
     seguro: {type: mixed, required: true},
     licencia_transito: {type: mixed, required: true},
     runt: {type: mixed, required: true},
+    soat_vencimiento: { type: Date, required: false },
+    tecnomecanica_vencimiento: { type: Date, required: false },
+    seguro_vencimiento: { type: Date, required: false },
+    tarjeta_operacion_vencimiento: { type: Date, required: false },
 })
 
 export default mongoose.model<VehicleDocuments>("VehicleDocument", VehicleDocumentsSchema)
