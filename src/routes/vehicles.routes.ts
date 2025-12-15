@@ -6,6 +6,8 @@ import { OperadorAuth } from "@/auth/operador.auth";
 import { upload } from "@/middlewares/multer.middleware";
 import { SuperAdminAut } from "@/auth/superadmon.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
+import { SessionAuth } from "@/auth/session.auth";
+import { VehicleWriteAuth } from "@/auth/vehicle-write.auth";
 
 const router: Router = Router();
 const vehiclesController = new VehiclesController();
@@ -18,9 +20,10 @@ const vehiclesController = new VehiclesController();
  * /vehicles:
  *   post:
  *     tags: [Vehicles]
- *     summary: Crear vehículo (coordinador)
+ *     summary: Crear vehículo (admin/coordinador/comercia)
  *     description: |
- *       Crea un vehículo. Soporta imagen `picture` (multipart/form-data).
+ *       Crea un vehículo. Solo admin, coordinador y comercia pueden crear vehículos.
+ *       Soporta imagen `picture` (multipart/form-data).
  *       `company_id` es opcional si el token ya trae company_id.
  *     security:
  *       - sessionCookie: []
@@ -57,7 +60,7 @@ const vehiclesController = new VehiclesController();
  */
 router.post(
     "/",
-    CoordinadorAuth,
+    VehicleWriteAuth,
     upload.single("picture"),
     vehiclesController.create_vehicle.bind(vehiclesController)
 );
@@ -167,7 +170,8 @@ router.post(
  * /vehicles:
  *   get:
  *     tags: [Vehicles]
- *     summary: Listar vehículos (superadmon)
+ *     summary: Listar vehículos (todos los usuarios)
+ *     description: Permite a todos los usuarios autenticados consultar todos los vehículos del sistema.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -202,7 +206,7 @@ router.post(
  *                     pagination: { $ref: '#/components/schemas/VehiclesPagination' }
  *               required: [message, data]
  */
-router.get("/", SuperAdminAut, vehiclesController.get_all_vehicles.bind(vehiclesController));
+router.get("/", SessionAuth, vehiclesController.get_all_vehicles.bind(vehiclesController));
 
 // Obtener vehículos por compañía
 /**
@@ -210,8 +214,8 @@ router.get("/", SuperAdminAut, vehiclesController.get_all_vehicles.bind(vehicles
  * /vehicles/company:
  *   get:
  *     tags: [Vehicles]
- *     summary: Listar vehículos por compañía (contabilidad)
- *     description: Usa `company_id` del token si existe, si no, se puede enviar por query.
+ *     summary: Listar vehículos por compañía (todos los usuarios)
+ *     description: Usa `company_id` del token si existe, si no, se puede enviar por query. Todos los usuarios autenticados pueden consultar.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -249,13 +253,13 @@ router.get("/", SuperAdminAut, vehiclesController.get_all_vehicles.bind(vehicles
  *                     pagination: { $ref: '#/components/schemas/VehiclesPagination' }
  *               required: [message, data]
  */
-router.get("/company", ContabilidadAuth, vehiclesController.get_all_vehicles_by_company.bind(vehiclesController));
+router.get("/company", SessionAuth, vehiclesController.get_all_vehicles_by_company.bind(vehiclesController));
 /**
  * @openapi
  * /vehicles/company/{company_id}:
  *   get:
  *     tags: [Vehicles]
- *     summary: Listar vehículos por compañía (contabilidad) por path param
+ *     summary: Listar vehículos por compañía por path param (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -294,7 +298,7 @@ router.get("/company", ContabilidadAuth, vehiclesController.get_all_vehicles_by_
  *                     pagination: { $ref: '#/components/schemas/VehiclesPagination' }
  *               required: [message, data]
  */
-router.get("/company/:company_id", ContabilidadAuth, vehiclesController.get_all_vehicles_by_company.bind(vehiclesController));
+router.get("/company/:company_id", SessionAuth, vehiclesController.get_all_vehicles_by_company.bind(vehiclesController));
 
 // Obtener todos los vehículos con sus últimos reportes (operacional y preoperacional)
 /**
@@ -302,8 +306,8 @@ router.get("/company/:company_id", ContabilidadAuth, vehiclesController.get_all_
  * /vehicles/last-reports:
  *   get:
  *     tags: [Vehicles]
- *     summary: Vehículos con últimos reportes (contabilidad)
- *     description: Usa company_id del token o por query.
+ *     summary: Vehículos con últimos reportes (todos los usuarios)
+ *     description: Usa company_id del token o por query. Todos los usuarios autenticados pueden consultar.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -328,13 +332,13 @@ router.get("/company/:company_id", ContabilidadAuth, vehiclesController.get_all_
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/last-reports", ContabilidadAuth, vehiclesController.get_all_vehicles_last_reports.bind(vehiclesController));
+router.get("/last-reports", SessionAuth, vehiclesController.get_all_vehicles_last_reports.bind(vehiclesController));
 /**
  * @openapi
  * /vehicles/last-reports/{company_id}:
  *   get:
  *     tags: [Vehicles]
- *     summary: Vehículos con últimos reportes por compañía (contabilidad)
+ *     summary: Vehículos con últimos reportes por compañía (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -360,7 +364,7 @@ router.get("/last-reports", ContabilidadAuth, vehiclesController.get_all_vehicle
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/last-reports/:company_id", ContabilidadAuth, vehiclesController.get_all_vehicles_last_reports.bind(vehiclesController));
+router.get("/last-reports/:company_id", SessionAuth, vehiclesController.get_all_vehicles_last_reports.bind(vehiclesController));
 
 // Obtener vehículos por usuario
 /**
@@ -368,7 +372,7 @@ router.get("/last-reports/:company_id", ContabilidadAuth, vehiclesController.get
  * /vehicles/user/{user_id}:
  *   get:
  *     tags: [Vehicles]
- *     summary: Vehículos por usuario (operador)
+ *     summary: Vehículos por usuario (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -388,7 +392,7 @@ router.get("/last-reports/:company_id", ContabilidadAuth, vehiclesController.get
  *                 data: { type: array, items: { type: object } }
  *               required: [message, data]
  */
-router.get("/user/:user_id", OperadorAuth, vehiclesController.get_vehicles_by_user.bind(vehiclesController));
+router.get("/user/:user_id", SessionAuth, vehiclesController.get_vehicles_by_user.bind(vehiclesController));
 
 // Obtener documentos de un vehículo
 /**
@@ -396,7 +400,7 @@ router.get("/user/:user_id", OperadorAuth, vehiclesController.get_vehicles_by_us
  * /vehicles/{vehicle_id}/documents:
  *   get:
  *     tags: [Vehicles]
- *     summary: Obtener documentos del vehículo
+ *     summary: Obtener documentos del vehículo (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -416,7 +420,7 @@ router.get("/user/:user_id", OperadorAuth, vehiclesController.get_vehicles_by_us
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/documents", OperadorAuth, vehiclesController.get_vehicle_documents.bind(vehiclesController));
+router.get("/:vehicle_id/documents", SessionAuth, vehiclesController.get_vehicle_documents.bind(vehiclesController));
 
 // Actualizar documentos de un vehículo + vencimientos
 /**
@@ -424,7 +428,7 @@ router.get("/:vehicle_id/documents", OperadorAuth, vehiclesController.get_vehicl
  * /vehicles/{vehicle_id}/documents:
  *   put:
  *     tags: [Vehicles]
- *     summary: Actualizar documentos del vehículo (multipart)
+ *     summary: Actualizar documentos del vehículo (admin/coordinador/comercia)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -458,7 +462,7 @@ router.get("/:vehicle_id/documents", OperadorAuth, vehiclesController.get_vehicl
  */
 router.put(
     "/:vehicle_id/documents",
-    OperadorAuth,
+    VehicleWriteAuth,
     upload.fields([
         { name: "soat", maxCount: 1 },
         { name: "tecnomecanica", maxCount: 1 },
@@ -475,7 +479,7 @@ router.put(
  * /vehicles/{vehicle_id}/operationals:
  *   get:
  *     tags: [Vehicles]
- *     summary: Historial de operacionales
+ *     summary: Historial de operacionales (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -501,7 +505,7 @@ router.put(
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/operationals", OperadorAuth, vehiclesController.get_vehicle_operationals.bind(vehiclesController));
+router.get("/:vehicle_id/operationals", SessionAuth, vehiclesController.get_vehicle_operationals.bind(vehiclesController));
 
 // Obtener preoperacionales de un vehículo (historial)
 /**
@@ -509,7 +513,7 @@ router.get("/:vehicle_id/operationals", OperadorAuth, vehiclesController.get_veh
  * /vehicles/{vehicle_id}/preoperationals:
  *   get:
  *     tags: [Vehicles]
- *     summary: Historial de preoperacionales
+ *     summary: Historial de preoperacionales (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -535,7 +539,7 @@ router.get("/:vehicle_id/operationals", OperadorAuth, vehiclesController.get_veh
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/preoperationals", OperadorAuth, vehiclesController.get_vehicle_preoperationals.bind(vehiclesController));
+router.get("/:vehicle_id/preoperationals", SessionAuth, vehiclesController.get_vehicle_preoperationals.bind(vehiclesController));
 
 // Obtener último operacional de un vehículo
 /**
@@ -543,7 +547,7 @@ router.get("/:vehicle_id/preoperationals", OperadorAuth, vehiclesController.get_
  * /vehicles/{vehicle_id}/last-operational:
  *   get:
  *     tags: [Vehicles]
- *     summary: Último operacional
+ *     summary: Último operacional (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -563,7 +567,7 @@ router.get("/:vehicle_id/preoperationals", OperadorAuth, vehiclesController.get_
  *                 data: { type: object, nullable: true }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/last-operational", OperadorAuth, vehiclesController.get_last_operational_by_vehicle.bind(vehiclesController));
+router.get("/:vehicle_id/last-operational", SessionAuth, vehiclesController.get_last_operational_by_vehicle.bind(vehiclesController));
 
 // Obtener último preoperacional de un vehículo
 /**
@@ -571,7 +575,7 @@ router.get("/:vehicle_id/last-operational", OperadorAuth, vehiclesController.get
  * /vehicles/{vehicle_id}/last-preoperational:
  *   get:
  *     tags: [Vehicles]
- *     summary: Último preoperacional
+ *     summary: Último preoperacional (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -591,7 +595,7 @@ router.get("/:vehicle_id/last-operational", OperadorAuth, vehiclesController.get
  *                 data: { type: object, nullable: true }
  *               required: [message, data]
  */
-router.get("/:vehicle_id/last-preoperational", OperadorAuth, vehiclesController.get_last_preoperational_by_vehicle.bind(vehiclesController));
+router.get("/:vehicle_id/last-preoperational", SessionAuth, vehiclesController.get_last_preoperational_by_vehicle.bind(vehiclesController));
 
 // Obtener vehículo por ID
 /**
@@ -599,7 +603,7 @@ router.get("/:vehicle_id/last-preoperational", OperadorAuth, vehiclesController.
  * /vehicles/{id}:
  *   get:
  *     tags: [Vehicles]
- *     summary: Obtener vehículo por ID
+ *     summary: Obtener vehículo por ID (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -619,7 +623,7 @@ router.get("/:vehicle_id/last-preoperational", OperadorAuth, vehiclesController.
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:id", OperadorAuth, vehiclesController.get_vehicle_by_id.bind(vehiclesController));
+router.get("/:id", SessionAuth, vehiclesController.get_vehicle_by_id.bind(vehiclesController));
 
 // Descargar ficha técnica del vehículo (PDF)
 /**
@@ -627,7 +631,7 @@ router.get("/:id", OperadorAuth, vehiclesController.get_vehicle_by_id.bind(vehic
  * /vehicles/{id}/technical-sheet-pdf:
  *   get:
  *     tags: [Vehicles]
- *     summary: Descargar ficha técnica del vehículo (PDF)
+ *     summary: Descargar ficha técnica del vehículo (PDF) (todos los usuarios)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -644,7 +648,7 @@ router.get("/:id", OperadorAuth, vehiclesController.get_vehicle_by_id.bind(vehic
  *               type: string
  *               format: binary
  */
-router.get("/:id/technical-sheet-pdf", CoordinadorAuth, vehiclesController.download_vehicle_technical_sheet_pdf.bind(vehiclesController));
+router.get("/:id/technical-sheet-pdf", SessionAuth, vehiclesController.download_vehicle_technical_sheet_pdf.bind(vehiclesController));
 
 // Actualizar vehículo
 /**
@@ -652,7 +656,7 @@ router.get("/:id/technical-sheet-pdf", CoordinadorAuth, vehiclesController.downl
  * /vehicles/{id}:
  *   put:
  *     tags: [Vehicles]
- *     summary: Actualizar vehículo
+ *     summary: Actualizar vehículo (admin/coordinador/comercia)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -675,7 +679,7 @@ router.get("/:id/technical-sheet-pdf", CoordinadorAuth, vehiclesController.downl
  *             schema:
  *               $ref: '#/components/schemas/MessageResponse'
  */
-router.put("/:id", OperadorAuth, vehiclesController.update_vehicle.bind(vehiclesController));
+router.put("/:id", VehicleWriteAuth, vehiclesController.update_vehicle.bind(vehiclesController));
 
 // Actualizar imagen del vehículo
 /**
@@ -683,7 +687,7 @@ router.put("/:id", OperadorAuth, vehiclesController.update_vehicle.bind(vehicles
  * /vehicles/{id}/picture:
  *   put:
  *     tags: [Vehicles]
- *     summary: Actualizar imagen del vehículo (multipart)
+ *     summary: Actualizar imagen del vehículo (admin/coordinador/comercia)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -710,7 +714,7 @@ router.put("/:id", OperadorAuth, vehiclesController.update_vehicle.bind(vehicles
  */
 router.put(
     "/:id/picture",
-    OperadorAuth,
+    VehicleWriteAuth,
     upload.single("picture"),
     vehiclesController.update_vehicle_picture.bind(vehiclesController)
 );
@@ -721,7 +725,7 @@ router.put(
  * /vehicles/{id}/owner:
  *   put:
  *     tags: [Vehicles]
- *     summary: Actualizar propietario del vehículo
+ *     summary: Actualizar propietario del vehículo (admin/coordinador/comercia)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -746,7 +750,7 @@ router.put(
  *             schema:
  *               $ref: '#/components/schemas/MessageResponse'
  */
-router.put("/:id/owner", OperadorAuth, vehiclesController.update_vehicle_owner.bind(vehiclesController));
+router.put("/:id/owner", VehicleWriteAuth, vehiclesController.update_vehicle_owner.bind(vehiclesController));
 
 // Actualizar conductor del vehículo
 /**
@@ -754,7 +758,7 @@ router.put("/:id/owner", OperadorAuth, vehiclesController.update_vehicle_owner.b
  * /vehicles/{id}/driver:
  *   put:
  *     tags: [Vehicles]
- *     summary: Actualizar conductor asignado al vehículo
+ *     summary: Actualizar conductor asignado al vehículo (admin/coordinador/comercia)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -779,7 +783,7 @@ router.put("/:id/owner", OperadorAuth, vehiclesController.update_vehicle_owner.b
  *             schema:
  *               $ref: '#/components/schemas/MessageResponse'
  */
-router.put("/:id/driver", OperadorAuth, vehiclesController.update_vehicle_driver.bind(vehiclesController));
+router.put("/:id/driver", VehicleWriteAuth, vehiclesController.update_vehicle_driver.bind(vehiclesController));
 
 export default router;
 
