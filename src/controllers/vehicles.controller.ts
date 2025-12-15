@@ -92,7 +92,7 @@ export class VehiclesController {
 
     public async create_operational_bills(req: Request, res: Response) {
         try {
-            const { vehicle_id, user_id } = req.body;
+            const { vehicle_id, user_id, solicitud_id } = req.body;
             let { bills } = req.body;
             const auth_user_id = (req as AuthRequest).user?._id;
 
@@ -122,6 +122,7 @@ export class VehiclesController {
             await this.vehicleServices.create_operational_bills({
                 vehicle_id,
                 user_id: target_user_id,
+                solicitud_id: solicitud_id || undefined,
                 bills: bills as any
             });
             res.status(201).json({ 

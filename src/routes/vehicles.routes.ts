@@ -122,8 +122,10 @@ router.post(
  *     tags: [Vehicles]
  *     summary: Registrar gastos operacionales (operador)
  *     description: |
- *       Enviar `vehicle_id`, `user_id` (opcional; el backend puede usar el usuario autenticado), y `bills`.
+ *       Enviar `vehicle_id`, `user_id` (opcional; el backend puede usar el usuario autenticado), `solicitud_id` (opcional para vincular gastos a una solicitud), y `bills`.
  *       `bills` puede venir como JSON o string JSON.
+ *
+ *       Si se proporciona `solicitud_id`, los gastos se vincularán a la solicitud y se recalculará automáticamente la liquidación.
  *
  *       Archivos: nombres dinámicos tipo `bills[0][media_support]`.
  *     security:
@@ -137,6 +139,7 @@ router.post(
  *             properties:
  *               vehicle_id: { type: string }
  *               user_id: { type: string }
+ *               solicitud_id: { type: string, description: "Opcional: ID de la solicitud para vincular gastos" }
  *               bills:
  *                 oneOf:
  *                   - type: string

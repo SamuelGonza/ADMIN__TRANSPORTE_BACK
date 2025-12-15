@@ -546,6 +546,48 @@ router.put("/:id/reject", CoordinadorAuth, solicitudesController.reject_solicitu
  *       200:
  *         description: Datos actualizados
  */
+// Calcular liquidación automática
+/**
+ * @openapi
+ * /solicitudes/{id}/calcular-liquidacion:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Calcular liquidación automática (contabilidad)
+ *     description: |
+ *       Calcula automáticamente la liquidación del servicio:
+ *       - Total Gastos Operacionales = Suma de gastos vinculados a la solicitud
+ *       - Utilidad = valor_a_facturar - valor_cancelado - total_gastos_operacionales
+ *       - Porcentaje Utilidad = (utilidad / valor_a_facturar) * 100
+ *       - Valor Documento Equivalente = utilidad (si no está definido)
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Liquidación calculada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     valor_a_facturar: { type: number }
+ *                     valor_cancelado: { type: number }
+ *                     total_gastos_operacionales: { type: number }
+ *                     total_gastos: { type: number }
+ *                     utilidad: { type: number }
+ *                     porcentaje_utilidad: { type: number }
+ *                     valor_documento_equivalente: { type: number }
+ */
+router.post("/:id/calcular-liquidacion", ContabilidadAuth, solicitudesController.calcular_liquidacion.bind(solicitudesController));
+
 router.put("/:id/financial", ContabilidadAuth, solicitudesController.update_financial_data.bind(solicitudesController));
 
 // Actualizar contabilidad por bus asignado (contrato por bus)

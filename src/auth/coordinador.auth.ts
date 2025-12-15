@@ -24,6 +24,7 @@ export const CoordinadorAuth = async (req: Request, res: Response, next: NextFun
         (req as AuthRequest).user = {
             _id: decoded._id,
             role: decoded.role,
+            company_id: decoded.company_id
         };
 
         next()

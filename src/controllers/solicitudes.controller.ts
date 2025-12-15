@@ -342,6 +342,27 @@ export class SolicitudesController {
         }
     }
 
+    public async calcular_liquidacion(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const response = await this.solicitudesService.calcular_liquidacion({ solicitud_id: id });
+            res.status(200).json(response);
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al calcular liquidación"
+            });
+            return;
+        }
+    }
+
     public async update_financial_data(req: Request, res: Response) {
         try {
             const { id } = req.params;

@@ -87,6 +87,8 @@ export interface BitacoraSolicitud extends Document {
     // Utilidad
     utilidad: number; // UTILIDAD (valor)
     porcentaje_utilidad: number; // % (porcentaje de utilidad)
+    total_gastos_operacionales?: number; // Suma automática de gastos operacionales vinculados
+    valor_documento_equivalente?: number; // Valor final para documento legal equivalente
 
     // Contratos (presupuesto/consumo)
     contract_id?: ObjectId;

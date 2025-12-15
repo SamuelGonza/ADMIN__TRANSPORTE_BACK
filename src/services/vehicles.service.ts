@@ -289,10 +289,12 @@ export class VehicleServices {
     public async create_operational_bills({
         vehicle_id,
         user_id,
+        solicitud_id,
         bills
     }: {
         vehicle_id: string,
         user_id: string,
+        solicitud_id?: string, // Opcional: vincular gastos a una solicitud específica
         bills: Array<{
             type_bill: "fuel" | "tolls" | "repairs" | "fines" | "parking_lot",
             value: number,
@@ -346,15 +348,35 @@ export class VehicleServices {
                 })
             );
 
+            // Validar solicitud_id si se proporciona
+            if (solicitud_id) {
+                const solicitudModel = (await import("@/models/solicitud.model")).default;
+                const solicitud = await solicitudModel.findById(solicitud_id);
+                if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+            }
+
             // Crear el documento de gastos operacionales
             const operational = await vhc_operationalModel.create({
                 vehicle_id,
+                solicitud_id: solicitud_id || undefined,
                 uploaded_by: user_id,
                 bills: processedBills,
                 created: new Date()
             });
 
             await operational.save();
+
+            // Si hay solicitud_id, recalcular liquidación automáticamente
+            if (solicitud_id) {
+                try {
+                    const { SolicitudesService } = await import("@/services/solicitudes.service");
+                    const solicitudesService = new SolicitudesService();
+                    await solicitudesService.calcular_liquidacion({ solicitud_id });
+                } catch (calcError) {
+                    console.log("Error al recalcular liquidación:", calcError);
+                    // No lanzar error, solo loguear (el gasto ya se guardó)
+                }
+            }
 
             // Notificar a la empresa/contabilidad sobre los nuevos gastos registrados
             try {
@@ -454,7 +476,16 @@ export class VehicleServices {
             const [vehicles, total] = await Promise.all([
                 vehicleModel
                     .find(query)
-                    .populate('driver_id', 'full_name contact.phone')
+                    .populate({
+                        path: 'driver_id',
+                        select: 'full_name contact email role company_id',
+                        match: { is_delete: false, is_active: true }
+                    })
+                    .populate({
+                        path: 'possible_drivers',
+                        select: 'full_name contact email role company_id',
+                        match: { is_delete: false, is_active: true }
+                    })
                     .populate('owner_id.company_id', 'company_name')
                     .populate('owner_id.user_id', 'full_name')
                     .skip(skip)
@@ -519,7 +550,16 @@ export class VehicleServices {
             const [vehicles, total] = await Promise.all([
                 vehicleModel
                     .find(query)
-                    .populate('driver_id', 'full_name contact.phone')
+                    .populate({
+                        path: 'driver_id',
+                        select: 'full_name contact email role company_id',
+                        match: { is_delete: false, is_active: true }
+                    })
+                    .populate({
+                        path: 'possible_drivers',
+                        select: 'full_name contact email role company_id',
+                        match: { is_delete: false, is_active: true }
+                    })
                     .populate('owner_id.company_id', 'company_name')
                     .populate('owner_id.user_id', 'full_name')
                     .skip(skip)
@@ -561,8 +601,16 @@ export class VehicleServices {
         try {
             const vehicle = await vehicleModel
                 .findById(id)
-                .populate('driver_id', 'full_name contact.phone')
-                .populate('possible_drivers', 'full_name contact.phone')
+                .populate({
+                    path: 'driver_id',
+                    select: 'full_name contact email role company_id',
+                    match: { is_delete: false, is_active: true }
+                })
+                .populate({
+                    path: 'possible_drivers',
+                    select: 'full_name contact email role company_id',
+                    match: { is_delete: false, is_active: true }
+                })
                 .populate('owner_id.company_id', 'company_name')
                 .populate('owner_id.user_id', 'full_name')
                 .lean();

@@ -115,6 +115,8 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     // Utilidad
     utilidad: { type: Number, required: true, default: 0 }, // UTILIDAD (valor)
     porcentaje_utilidad: { type: Number, required: true, default: 0 }, // % (porcentaje de utilidad)
+    total_gastos_operacionales: { type: Number, required: false, default: 0 }, // Suma automática de gastos operacionales vinculados
+    valor_documento_equivalente: { type: Number, required: false }, // Valor final para documento legal equivalente
 
     // Contratos (presupuesto/consumo)
     contract_id: { type: MongoIdRef, ref: "Contract", required: false },

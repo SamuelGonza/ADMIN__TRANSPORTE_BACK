@@ -13,6 +13,7 @@ import vehicleModel from '@/models/vehicle.model';
 import { LocationsService } from './locations.service';
 import contractModel from '@/models/contract.model';
 import companyModel from '@/models/company.model';
+import vhc_operationalModel from '@/models/vhc_operational.model';
 import fs from "fs";
 import path from "path";
 import { renderHtmlToPdfBuffer } from "@/utils/pdf";
@@ -1071,6 +1072,9 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Recalcular liquidación automáticamente al finalizar el servicio
+            await this.calcular_liquidacion({ solicitud_id });
+
             return {
                 message: "Servicio finalizado exitosamente",
                 solicitud
@@ -1082,8 +1086,69 @@ export class SolicitudesService {
     }
 
     /**
+     * Calcular liquidación automática
+     * Fórmula: Total Servicios Realizados - Gastos = Total a Pagar
+     * Calcula: utilidad = valor_a_facturar - valor_cancelado - total_gastos_operacionales
+     */
+    public async calcular_liquidacion({
+        solicitud_id
+    }: {
+        solicitud_id: string
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Obtener todos los gastos operacionales vinculados a esta solicitud
+            const gastos = await vhc_operationalModel.find({ solicitud_id }).lean();
+
+            // Calcular total de gastos operacionales
+            const total_gastos_operacionales = gastos.reduce((sum, gasto) => {
+                const billsTotal = (gasto.bills || []).reduce((bSum: number, bill: any) => bSum + (bill.value || 0), 0);
+                return sum + billsTotal;
+            }, 0);
+
+            // Calcular utilidad: Total Servicios - Gastos Cancelados - Gastos Operacionales
+            const total_gastos = (solicitud.valor_cancelado || 0) + total_gastos_operacionales;
+            const utilidad = (solicitud.valor_a_facturar || 0) - total_gastos;
+            const porcentaje_utilidad = solicitud.valor_a_facturar > 0 
+                ? (utilidad / solicitud.valor_a_facturar) * 100 
+                : 0;
+
+            // Actualizar campos
+            solicitud.total_gastos_operacionales = total_gastos_operacionales;
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+            
+            // Si no hay valor_documento_equivalente, usar utilidad como valor por defecto
+            if (!solicitud.valor_documento_equivalente) {
+                solicitud.valor_documento_equivalente = utilidad;
+            }
+
+            await solicitud.save();
+
+            return {
+                message: "Liquidación calculada exitosamente",
+                data: {
+                    valor_a_facturar: solicitud.valor_a_facturar,
+                    valor_cancelado: solicitud.valor_cancelado,
+                    total_gastos_operacionales,
+                    total_gastos,
+                    utilidad,
+                    porcentaje_utilidad,
+                    valor_documento_equivalente: solicitud.valor_documento_equivalente
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudo calcular la liquidación");
+        }
+    }
+
+    /**
      * Actualizar datos financieros
      * Para ir completando información durante el proceso
+     * Automáticamente recalcula la liquidación si se actualizan valores financieros
      */
     public async update_financial_data({
         solicitud_id,
@@ -1096,6 +1161,7 @@ export class SolicitudesService {
             n_egreso?: string,
             n_factura?: string,
             fecha_factura?: Date,
+            valor_documento_equivalente?: number,
         }
     }) {
         try {
@@ -1108,8 +1174,12 @@ export class SolicitudesService {
             if (payload.n_egreso !== undefined) solicitud.n_egreso = payload.n_egreso;
             if (payload.n_factura !== undefined) solicitud.n_factura = payload.n_factura;
             if (payload.fecha_factura !== undefined) solicitud.fecha_factura = payload.fecha_factura;
+            if (payload.valor_documento_equivalente !== undefined) solicitud.valor_documento_equivalente = payload.valor_documento_equivalente;
 
             await solicitud.save();
+
+            // Recalcular liquidación automáticamente después de actualizar datos financieros
+            await this.calcular_liquidacion({ solicitud_id });
 
             return {
                 message: "Datos financieros actualizados exitosamente",
