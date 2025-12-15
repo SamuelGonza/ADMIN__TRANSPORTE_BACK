@@ -19,7 +19,7 @@ export const ComercialAuth = async (req: Request, res: Response, next: NextFunct
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "comercia"];
+        const allowedRoles = ["superadmon", "admin", "comercial"];
         if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
 
         (req as AuthRequest).user = {

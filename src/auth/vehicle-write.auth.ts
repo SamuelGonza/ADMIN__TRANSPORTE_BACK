@@ -21,7 +21,7 @@ export const VehicleWriteAuth = async (req: Request, res: Response, next: NextFu
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["admin", "coordinador", "comercia"];
+        const allowedRoles = ["admin", "coordinador", "comercial"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para realizar esta operación");
         }
