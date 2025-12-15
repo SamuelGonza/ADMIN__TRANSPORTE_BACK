@@ -108,7 +108,7 @@ router.get("/", SuperAdminAut, companyController.get_all_companies.bind(companyC
  *                 data: { type: object }
  *               required: [message, data]
  */
-router.get("/:id", AdminAut, companyController.get_company_by_id.bind(companyController));
+router.get("/:id", ContabilidadAuth, companyController.get_company_by_id.bind(companyController));
 
 // Obtener información de facturación electrónica de la compañía
 /**
