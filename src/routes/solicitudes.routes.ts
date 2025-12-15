@@ -6,6 +6,7 @@ import { GestionAuth } from "@/auth/gestion.auth";
 import { OperadorAuth } from "@/auth/operador.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { ConductorAuth } from "@/auth/conductor.auth";
+import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
 
 const router: Router = Router();
 const solicitudesController = new SolicitudesController();
@@ -448,7 +449,7 @@ router.get("/:id", CoordinadorAuth, solicitudesController.get_solicitud_by_id.bi
  *               type: string
  *               format: binary
  */
-router.get("/:id/passenger-manifest-pdf", CoordinadorAuth, solicitudesController.download_passenger_manifest_pdf.bind(solicitudesController));
+router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesController.download_passenger_manifest_pdf.bind(solicitudesController));
 
 // Aceptar solicitud pendiente (ahora usa placa en lugar de vehiculo_id)
 /**

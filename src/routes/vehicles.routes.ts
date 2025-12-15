@@ -8,6 +8,7 @@ import { SuperAdminAut } from "@/auth/superadmon.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { SessionAuth } from "@/auth/session.auth";
 import { VehicleWriteAuth } from "@/auth/vehicle-write.auth";
+import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
 
 const router: Router = Router();
 const vehiclesController = new VehiclesController();
@@ -651,7 +652,7 @@ router.get("/:id", SessionAuth, vehiclesController.get_vehicle_by_id.bind(vehicl
  *               type: string
  *               format: binary
  */
-router.get("/:id/technical-sheet-pdf", SessionAuth, vehiclesController.download_vehicle_technical_sheet_pdf.bind(vehiclesController));
+router.get("/:id/technical-sheet-pdf", ReportsDownloadAuth, vehiclesController.download_vehicle_technical_sheet_pdf.bind(vehiclesController));
 
 // Actualizar vehículo
 /**

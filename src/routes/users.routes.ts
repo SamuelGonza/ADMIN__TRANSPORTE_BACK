@@ -8,6 +8,7 @@ import { upload } from "@/middlewares/multer.middleware";
 import { SuperAdminAut } from "@/auth/superadmon.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { UsersReadAuth } from "@/auth/users-read.auth";
+import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
 
 const router: Router = Router();
 const usersController = new UsersController();
@@ -448,7 +449,7 @@ router.put(
  */
 router.get(
     "/driver/:driver_id/technical-sheet-pdf",
-    OperadorAuth,
+    ReportsDownloadAuth,
     usersController.download_driver_technical_sheet_pdf.bind(usersController)
 );
 
