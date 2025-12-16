@@ -3,11 +3,34 @@ import clientModel from "@/models/client.model";
 import { ResponseError } from "@/utils/errors";
 import { compare_password, generate_password, generate_token_session, hash_password } from "@/utils/generate";
 import { send_client_registration_credentials, send_client_new_password } from "@/email/index.email";
+import { ContractsService } from "./contracts.service";
+import { ContractPricingMode, ContractBudgetPeriod } from "@/contracts/interfaces/contract.interface";
 
 export class ClientService {
 
     //* #========== POST METHODS ==========#
-    public async create_client({ payload, company_id }: { payload: Client, company_id: string }) {
+    public async create_client({ 
+        payload, 
+        company_id, 
+        created_by,
+        contract_data 
+    }: { 
+        payload: Client, 
+        company_id: string,
+        created_by?: string,
+        contract_data?: {
+            periodo_presupuesto: ContractBudgetPeriod;
+            valor_presupuesto: number;
+            cobro?: {
+                modo_default?: ContractPricingMode;
+                por_hora?: number;
+                por_kilometro?: number;
+                por_distancia?: number;
+                tarifa_amva?: number;
+            };
+            notes?: string;
+        }
+    }) {
         try {
 
             const {
@@ -31,6 +54,23 @@ export class ClientService {
             })
 
             await new_client.save()
+
+            // Si se proporcionan datos de contrato, crear el contrato junto con el cliente
+            if (contract_data) {
+                const contractsService = new ContractsService();
+                await contractsService.create_contract({
+                    company_id,
+                    created_by,
+                    payload: {
+                        client_id: new_client._id.toString(),
+                        tipo_contrato: "fijo",
+                        periodo_presupuesto: contract_data.periodo_presupuesto,
+                        valor_presupuesto: contract_data.valor_presupuesto,
+                        cobro: contract_data.cobro,
+                        notes: contract_data.notes
+                    }
+                });
+            }
 
             // Enviar correo al cliente sobre el registro y credenciales
             await send_client_registration_credentials({

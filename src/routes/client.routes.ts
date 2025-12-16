@@ -140,7 +140,10 @@ router.post("/logout", SessionAuth, clientController.logout.bind(clientControlle
  *   post:
  *     tags: [Clients]
  *     summary: Crear cliente (gestión)
- *     description: Crea un cliente para la empresa del usuario autenticado (o `company_id` si se envía).
+ *     description: |
+ *       Crea un cliente para la empresa del usuario autenticado (o `company_id` si se envía).
+ *       Opcionalmente se puede crear un contrato junto con el cliente enviando el objeto `contract`.
+ *       Si no se envía `contract`, el cliente se crea sin contrato (servicios ocasionales).
  *     security:
  *       - sessionCookie: []
  *     requestBody:
@@ -155,6 +158,22 @@ router.post("/logout", SessionAuth, clientController.logout.bind(clientControlle
  *               contact_phone: { type: string }
  *               email: { type: string, format: email }
  *               company_id: { type: string }
+ *               contract:
+ *                 type: object
+ *                 description: Opcional. Si se proporciona, se crea un contrato fijo junto con el cliente.
+ *                 properties:
+ *                   periodo_presupuesto: { type: string, enum: [anio, mes, semana, dia] }
+ *                   valor_presupuesto: { type: number }
+ *                   cobro:
+ *                     type: object
+ *                     properties:
+ *                       modo_default: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva] }
+ *                       por_hora: { type: number }
+ *                       por_kilometro: { type: number }
+ *                       por_distancia: { type: number }
+ *                       tarifa_amva: { type: number }
+ *                   notes: { type: string }
+ *                 required: [periodo_presupuesto, valor_presupuesto]
  *             required: [name, email]
  *     responses:
  *       201:

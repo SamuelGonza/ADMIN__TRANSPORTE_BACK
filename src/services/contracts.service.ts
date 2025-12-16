@@ -31,21 +31,21 @@ export class ContractsService {
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
             if (String(client.company_id) !== String(company_id)) throw new ResponseError(401, "El cliente no pertenece a tu empresa");
 
-            // Reglas mínimas
-            if (payload.tipo_contrato === "fijo") {
-                if (payload.valor_presupuesto == null || Number.isNaN(payload.valor_presupuesto)) {
-                    throw new ResponseError(400, "valor_presupuesto es requerido para contrato fijo");
-                }
-                if (!payload.periodo_presupuesto) throw new ResponseError(400, "periodo_presupuesto es requerido para contrato fijo");
+            // Reglas mínimas: Los contratos siempre son fijos y requieren presupuesto
+            if (payload.valor_presupuesto == null || Number.isNaN(payload.valor_presupuesto)) {
+                throw new ResponseError(400, "valor_presupuesto es requerido para el contrato");
+            }
+            if (!payload.periodo_presupuesto) {
+                throw new ResponseError(400, "periodo_presupuesto es requerido para el contrato");
             }
 
             const contrato = await contractModel.create({
                 company_id,
                 client_id: payload.client_id,
-                tipo_contrato: payload.tipo_contrato,
+                tipo_contrato: "fijo", // Siempre fijo
                 cobro: payload.cobro || undefined,
                 periodo_presupuesto: payload.periodo_presupuesto,
-                valor_presupuesto: payload.valor_presupuesto ?? null,
+                valor_presupuesto: payload.valor_presupuesto,
                 valor_consumido: 0,
                 created_by: created_by || undefined,
                 historico: [
@@ -122,7 +122,6 @@ export class ContractsService {
         company_id?: string;
         updated_by?: string;
         payload: Partial<{
-            tipo_contrato: ContractType;
             periodo_presupuesto: ContractBudgetPeriod;
             valor_presupuesto: number | null;
             cobro: {
@@ -146,14 +145,13 @@ export class ContractsService {
             const prev_presupuesto = contrato.valor_presupuesto ?? null;
             const prev_consumido = contrato.valor_consumido;
 
-            if (payload.tipo_contrato) contrato.tipo_contrato = payload.tipo_contrato;
             if (payload.periodo_presupuesto) contrato.periodo_presupuesto = payload.periodo_presupuesto;
             if (payload.valor_presupuesto !== undefined) contrato.valor_presupuesto = payload.valor_presupuesto;
             if (payload.cobro !== undefined) (contrato as any).cobro = payload.cobro;
             if (payload.is_active !== undefined) contrato.is_active = payload.is_active;
 
-            // Si se tocó presupuesto/tipo, dejamos rastro
-            const presupuesto_changed = payload.valor_presupuesto !== undefined || payload.periodo_presupuesto !== undefined || payload.tipo_contrato !== undefined;
+            // Si se tocó presupuesto, dejamos rastro
+            const presupuesto_changed = payload.valor_presupuesto !== undefined || payload.periodo_presupuesto !== undefined;
             if (presupuesto_changed) {
                 contrato.historico.push({
                     type: "budget_set",

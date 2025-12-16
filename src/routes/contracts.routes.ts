@@ -25,7 +25,7 @@ const contractsController = new ContractsController();
  *             properties:
  *               company_id: { type: string, description: "Opcional si token trae company_id" }
  *               client_id: { type: string }
- *               tipo_contrato: { type: string, enum: [fijo, ocasional] }
+ *               tipo_contrato: { type: string, enum: [fijo], default: fijo }
  *               periodo_presupuesto: { type: string }
  *               valor_presupuesto: { type: number, nullable: true }
  *               cobro:
@@ -37,7 +37,7 @@ const contractsController = new ContractsController();
  *                   por_distancia: { type: number }
  *                   tarifa_amva: { type: number }
  *               notes: { type: string }
- *             required: [client_id, tipo_contrato]
+ *             required: [client_id]
  *     responses:
  *       201:
  *         description: Contrato creado

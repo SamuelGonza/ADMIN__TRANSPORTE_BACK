@@ -8,15 +8,18 @@ export class ClientController {
 
     public async create_client(req: Request, res: Response) {
         try {
-            const { company_id, ...payload } = req.body;
+            const { company_id, contract, ...payload } = req.body;
             const user_company_id = (req as AuthRequest).user?.company_id;
+            const created_by = (req as AuthRequest).user?._id;
             
             await this.clientService.create_client({ 
                 payload: payload as any, 
-                company_id: user_company_id || company_id 
+                company_id: user_company_id || company_id,
+                created_by,
+                contract_data: contract // Datos opcionales del contrato
             });
             res.status(201).json({ 
-                message: "Cliente creado exitosamente"
+                message: contract ? "Cliente y contrato creados exitosamente" : "Cliente creado exitosamente"
             });
         } catch (error) {
             if(error instanceof ResponseError){

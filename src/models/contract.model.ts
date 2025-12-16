@@ -25,7 +25,7 @@ const ContractSchema: Schema = new Schema<Contract>({
     company_id: { type: MongoIdRef, ref: "Companie", required: true },
     client_id: { type: MongoIdRef, ref: "Client", required: true },
 
-    tipo_contrato: { type: String, required: true, enum: ["fijo", "ocasional"] },
+    tipo_contrato: { type: String, required: true, enum: ["fijo"], default: "fijo" }, // Solo contratos fijos con presupuesto
 
     cobro: {
         modo_default: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "tarifa_amva"] },
