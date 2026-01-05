@@ -96,6 +96,19 @@ export interface BitacoraSolicitud extends Document {
     contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
     contract_charge_amount?: number;
 
+    // Flujo de contabilidad
+    accounting_status?: "no_iniciado" | "pendiente_operacional" | "operacional_completo" | "prefactura_pendiente" | "prefactura_aprobada" | "listo_para_facturacion" | "facturado"; // Estado del flujo de contabilidad
+    prefactura?: {
+        numero?: string;
+        fecha?: Date;
+        aprobada?: boolean;
+        aprobada_por?: ObjectId;
+        aprobada_fecha?: Date;
+        rechazada_por?: ObjectId;
+        rechazada_fecha?: Date;
+        notas?: string;
+    };
+
     // Metadata
     created: Date;
     created_by?: ObjectId; // Usuario que creó el registro

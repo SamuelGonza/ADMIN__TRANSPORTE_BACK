@@ -800,4 +800,179 @@ export class SolicitudesController {
             return;
         }
     }
+
+    /**
+     * Verificar que todos los vehículos tienen operacional subido
+     */
+    public async verify_operationals(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const response = await this.solicitudesService.verify_operationals_complete({ solicitud_id: id });
+            res.status(200).json({
+                message: response.all_complete 
+                    ? "Todos los vehículos tienen operacional subido" 
+                    : "Faltan operacionales por subir",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al verificar operacionales"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Generar prefactura
+     */
+    public async generate_prefactura(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { prefactura_numero } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            if (!prefactura_numero) {
+                res.status(400).json({
+                    ok: false,
+                    message: "prefactura_numero es requerido"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.generate_prefactura({
+                solicitud_id: id,
+                prefactura_numero,
+                user_id: user_id as string
+            });
+
+            res.status(200).json({
+                message: "Prefactura generada exitosamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar prefactura"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Aprobar prefactura
+     */
+    public async approve_prefactura(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { notas } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            const response = await this.solicitudesService.approve_prefactura({
+                solicitud_id: id,
+                user_id: user_id as string,
+                notas
+            });
+
+            res.status(200).json({
+                message: "Prefactura aprobada exitosamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al aprobar prefactura"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Rechazar prefactura
+     */
+    public async reject_prefactura(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { notas } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            const response = await this.solicitudesService.reject_prefactura({
+                solicitud_id: id,
+                user_id: user_id as string,
+                notas
+            });
+
+            res.status(200).json({
+                message: "Prefactura rechazada",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al rechazar prefactura"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Marcar solicitud como lista para facturación
+     */
+    public async mark_ready_for_billing(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const user_id = (req as AuthRequest).user?._id;
+
+            const response = await this.solicitudesService.mark_ready_for_billing({
+                solicitud_id: id,
+                user_id: user_id as string
+            });
+
+            res.status(200).json({
+                message: "Solicitud marcada como lista para facturación",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al marcar solicitud como lista para facturación"
+            });
+            return;
+        }
+    }
 }

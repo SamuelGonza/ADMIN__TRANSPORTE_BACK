@@ -124,6 +124,24 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     contract_charge_mode: { type: String, required: false, enum: ["within_contract", "outside_contract", "no_contract"], default: "no_contract" },
     contract_charge_amount: { type: Number, required: false, default: 0 },
 
+    // Flujo de contabilidad
+    accounting_status: { 
+        type: String, 
+        required: false, 
+        enum: ["no_iniciado", "pendiente_operacional", "operacional_completo", "prefactura_pendiente", "prefactura_aprobada", "listo_para_facturacion", "facturado"],
+        default: "no_iniciado"
+    },
+    prefactura: {
+        numero: { type: String, required: false },
+        fecha: { type: Date, required: false },
+        aprobada: { type: Boolean, required: false, default: false },
+        aprobada_por: { type: MongoIdRef, ref: "User", required: false },
+        aprobada_fecha: { type: Date, required: false },
+        rechazada_por: { type: MongoIdRef, ref: "User", required: false },
+        rechazada_fecha: { type: Date, required: false },
+        notas: { type: String, required: false }
+    },
+
     // Metadata
     created: { type: Date, default: new Date() },
     created_by: { type: MongoIdRef, ref: "User" }, // Usuario que creó el registro

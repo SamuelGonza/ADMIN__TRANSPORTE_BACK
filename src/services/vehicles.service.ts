@@ -366,12 +366,14 @@ export class VehicleServices {
 
             await operational.save();
 
-            // Si hay solicitud_id, recalcular liquidación automáticamente
+            // Si hay solicitud_id, recalcular liquidación automáticamente y actualizar estado de contabilidad
             if (solicitud_id) {
                 try {
                     const { SolicitudesService } = await import("@/services/solicitudes.service");
                     const solicitudesService = new SolicitudesService();
                     await solicitudesService.calcular_liquidacion({ solicitud_id });
+                    // Actualizar estado de contabilidad si todos los operacionales están completos
+                    await solicitudesService.update_accounting_status_on_operational_upload({ solicitud_id });
                 } catch (calcError) {
                     console.log("Error al recalcular liquidación:", calcError);
                     // No lanzar error, solo loguear (el gasto ya se guardó)

@@ -1432,6 +1432,14 @@ export class SolicitudesService {
             solicitud.novedades = payload.novedades || "";
             solicitud.service_status = "finished";
 
+            // Si ya tiene venta y costo definidos y no tiene estado de contabilidad, marcar como lista
+            if (solicitud.valor_cancelado > 0 && solicitud.valor_a_facturar > 0) {
+                const currentStatus = (solicitud as any).accounting_status;
+                if (!currentStatus || currentStatus === "no_iniciado") {
+                    (solicitud as any).accounting_status = "pendiente_operacional";
+                }
+            }
+
             await solicitud.save();
 
             // Recalcular liquidación automáticamente al finalizar el servicio
@@ -1607,6 +1615,17 @@ export class SolicitudesService {
             // Recalcular liquidación para actualizar PaymentSection
             await this.calcular_liquidacion({ solicitud_id });
 
+            // Si ya hay costos definidos, marcar como lista para contabilidad (no requiere que el servicio esté finalizado)
+            if (solicitud.valor_cancelado > 0 && solicitud.valor_a_facturar > 0) {
+                // Solo actualizar si no tiene un estado más avanzado
+                const currentStatus = (solicitud as any).accounting_status;
+                if (!currentStatus || currentStatus === "no_iniciado") {
+                    (solicitud as any).accounting_status = "pendiente_operacional";
+                }
+            }
+
+            await solicitud.save();
+
             return {
                 message: "Valores de venta establecidos exitosamente",
                 solicitud: solicitud.toObject()
@@ -1658,6 +1677,17 @@ export class SolicitudesService {
 
             // Recalcular liquidación para actualizar PaymentSection
             await this.calcular_liquidacion({ solicitud_id });
+
+            // Si ya hay venta definida, marcar como lista para contabilidad (no requiere que el servicio esté finalizado)
+            if (solicitud.valor_cancelado > 0 && solicitud.valor_a_facturar > 0) {
+                // Solo actualizar si no tiene un estado más avanzado
+                const currentStatus = (solicitud as any).accounting_status;
+                if (!currentStatus || currentStatus === "no_iniciado") {
+                    (solicitud as any).accounting_status = "pendiente_operacional";
+                }
+            }
+
+            await solicitud.save();
 
             return {
                 message: "Valores de costos establecidos exitosamente",
@@ -2062,6 +2092,289 @@ export class SolicitudesService {
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo obtener la solicitud");
+        }
+    }
+
+    //* #========== ACCOUNTING FLOW METHODS ==========#
+
+    /**
+     * Verificar que todos los vehículos de la solicitud tienen operacional subido
+     * Retorna lista de vehículos que faltan operacional
+     */
+    public async verify_operationals_complete({
+        solicitud_id
+    }: {
+        solicitud_id: string
+    }): Promise<{
+        all_complete: boolean;
+        missing_operationals: Array<{
+            vehiculo_id: string;
+            placa: string;
+        }>;
+    }> {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            const missing: Array<{ vehiculo_id: string; placa: string }> = [];
+
+            // Obtener vehículos asignados
+            const vehicleIds: string[] = [];
+            
+            // Si hay vehicle_assignments (multi-vehículo)
+            if ((solicitud as any).vehicle_assignments && Array.isArray((solicitud as any).vehicle_assignments) && (solicitud as any).vehicle_assignments.length > 0) {
+                (solicitud as any).vehicle_assignments.forEach((assignment: any) => {
+                    if (assignment.vehiculo_id) {
+                        vehicleIds.push(String(assignment.vehiculo_id));
+                    }
+                });
+            } else if (solicitud.vehiculo_id) {
+                // Si hay un solo vehículo
+                vehicleIds.push(String(solicitud.vehiculo_id));
+            }
+
+            if (vehicleIds.length === 0) {
+                throw new ResponseError(400, "La solicitud no tiene vehículos asignados");
+            }
+
+            // Verificar que cada vehículo tenga operacional vinculado a esta solicitud
+            for (const vehicleId of vehicleIds) {
+                const operational = await vhc_operationalModel.findOne({
+                    vehicle_id: vehicleId,
+                    solicitud_id: solicitud_id
+                });
+
+                if (!operational) {
+                    // Obtener placa del vehículo
+                    const vehicle = await vehicleModel.findById(vehicleId).select("placa").lean();
+                    missing.push({
+                        vehiculo_id: vehicleId,
+                        placa: (vehicle as any)?.placa || "N/A"
+                    });
+                }
+            }
+
+            return {
+                all_complete: missing.length === 0,
+                missing_operationals: missing
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al verificar operacionales");
+        }
+    }
+
+    /**
+     * Generar prefactura para una solicitud
+     * Requiere que todos los vehículos tengan operacional subido
+     */
+    public async generate_prefactura({
+        solicitud_id,
+        prefactura_numero,
+        user_id
+    }: {
+        solicitud_id: string;
+        prefactura_numero: string;
+        user_id: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar que la solicitud esté lista para contabilidad
+            if (!solicitud.valor_a_facturar || solicitud.valor_a_facturar <= 0) {
+                throw new ResponseError(400, "La solicitud no tiene valores de venta definidos");
+            }
+
+            if (!solicitud.valor_cancelado || solicitud.valor_cancelado <= 0) {
+                throw new ResponseError(400, "La solicitud no tiene valores de costos definidos");
+            }
+
+            // Verificar que todos los vehículos tengan operacional
+            const operationalCheck = await this.verify_operationals_complete({ solicitud_id });
+            if (!operationalCheck.all_complete) {
+                const missingPlacas = operationalCheck.missing_operationals.map(v => v.placa).join(", ");
+                throw new ResponseError(400, `Faltan operacionales para los siguientes vehículos: ${missingPlacas}`);
+            }
+
+            // Validar que no haya una prefactura ya generada
+            if ((solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "Ya existe una prefactura generada para esta solicitud");
+            }
+
+            // Generar prefactura
+            (solicitud as any).prefactura = {
+                numero: prefactura_numero,
+                fecha: new Date(),
+                aprobada: false
+            };
+
+            (solicitud as any).accounting_status = "prefactura_pendiente";
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            return {
+                message: "Prefactura generada exitosamente",
+                solicitud: solicitud.toObject()
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al generar prefactura");
+        }
+    }
+
+    /**
+     * Aprobar prefactura
+     */
+    public async approve_prefactura({
+        solicitud_id,
+        user_id,
+        notas
+    }: {
+        solicitud_id: string;
+        user_id: string;
+        notas?: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            if ((solicitud as any).prefactura.aprobada) {
+                throw new ResponseError(400, "La prefactura ya fue aprobada");
+            }
+
+            // Aprobar prefactura
+            (solicitud as any).prefactura.aprobada = true;
+            (solicitud as any).prefactura.aprobada_por = user_id;
+            (solicitud as any).prefactura.aprobada_fecha = new Date();
+            if (notas) {
+                (solicitud as any).prefactura.notas = notas;
+            }
+
+            (solicitud as any).accounting_status = "prefactura_aprobada";
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            return {
+                message: "Prefactura aprobada exitosamente",
+                solicitud: solicitud.toObject()
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al aprobar prefactura");
+        }
+    }
+
+    /**
+     * Rechazar prefactura
+     */
+    public async reject_prefactura({
+        solicitud_id,
+        user_id,
+        notas
+    }: {
+        solicitud_id: string;
+        user_id: string;
+        notas?: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            // Rechazar prefactura (volver a estado anterior)
+            (solicitud as any).prefactura.aprobada = false;
+            (solicitud as any).prefactura.rechazada_por = user_id;
+            (solicitud as any).prefactura.rechazada_fecha = new Date();
+            if (notas) {
+                (solicitud as any).prefactura.notas = notas;
+            }
+
+            // Volver a estado de operacional completo para que se pueda regenerar la prefactura
+            (solicitud as any).accounting_status = "operacional_completo";
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            return {
+                message: "Prefactura rechazada",
+                solicitud: solicitud.toObject()
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al rechazar prefactura");
+        }
+    }
+
+    /**
+     * Marcar solicitud como lista para facturación
+     * Se llama cuando el servicio se carga en el componente de facturación
+     */
+    public async mark_ready_for_billing({
+        solicitud_id,
+        user_id
+    }: {
+        solicitud_id: string;
+        user_id: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            if ((solicitud as any).accounting_status !== "prefactura_aprobada") {
+                throw new ResponseError(400, "La prefactura debe estar aprobada antes de marcar como lista para facturación");
+            }
+
+            (solicitud as any).accounting_status = "listo_para_facturacion";
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            return {
+                message: "Solicitud marcada como lista para facturación",
+                solicitud: solicitud.toObject()
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al marcar solicitud como lista para facturación");
+        }
+    }
+
+    /**
+     * Actualizar estado de operacional cuando se sube un operacional
+     * Se llama automáticamente cuando se sube un operacional vinculado a una solicitud
+     */
+    public async update_accounting_status_on_operational_upload({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) return; // No lanzar error, puede que la solicitud no exista aún
+
+            // Solo actualizar si está en estado pendiente_operacional
+            if ((solicitud as any).accounting_status === "pendiente_operacional") {
+                // Verificar si todos los vehículos tienen operacional
+                const operationalCheck = await this.verify_operationals_complete({ solicitud_id });
+                
+                if (operationalCheck.all_complete) {
+                    (solicitud as any).accounting_status = "operacional_completo";
+                    await solicitud.save();
+                }
+            }
+        } catch (error) {
+            // No lanzar error, solo loguear
+            console.error("Error al actualizar estado de contabilidad:", error);
         }
     }
 

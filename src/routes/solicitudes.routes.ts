@@ -765,5 +765,140 @@ router.put("/:id/financial", ContabilidadAuth, solicitudesController.update_fina
  */
 router.put("/:id/vehicle/:vehiculo_id/accounting", ContabilidadAuth, solicitudesController.update_assignment_accounting.bind(solicitudesController));
 
+// #========== RUTAS DE FLUJO DE CONTABILIDAD ==========#
+
+// Verificar que todos los vehículos tienen operacional subido
+/**
+ * @openapi
+ * /solicitudes/{id}/verify-operationals:
+ *   get:
+ *     tags: [Solicitudes]
+ *     summary: Verificar operacionales completos (contabilidad)
+ *     description: Verifica que todos los vehículos de la solicitud tengan operacional subido
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Estado de operacionales
+ */
+router.get("/:id/verify-operationals", ContabilidadAuth, solicitudesController.verify_operationals.bind(solicitudesController));
+
+// Generar prefactura
+/**
+ * @openapi
+ * /solicitudes/{id}/generate-prefactura:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Generar prefactura (contabilidad)
+ *     description: |
+ *       Genera una prefactura para la solicitud. Requiere que:
+ *       - Todos los vehículos tengan operacional subido
+ *       - Valores de venta y costos estén definidos
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               prefactura_numero: { type: string, description: "Número de la prefactura" }
+ *             required: [prefactura_numero]
+ *     responses:
+ *       200:
+ *         description: Prefactura generada
+ */
+router.post("/:id/generate-prefactura", ContabilidadAuth, solicitudesController.generate_prefactura.bind(solicitudesController));
+
+// Aprobar prefactura
+/**
+ * @openapi
+ * /solicitudes/{id}/approve-prefactura:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Aprobar prefactura (contabilidad)
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notas: { type: string, description: "Notas opcionales" }
+ *     responses:
+ *       200:
+ *         description: Prefactura aprobada
+ */
+router.put("/:id/approve-prefactura", ContabilidadAuth, solicitudesController.approve_prefactura.bind(solicitudesController));
+
+// Rechazar prefactura
+/**
+ * @openapi
+ * /solicitudes/{id}/reject-prefactura:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Rechazar prefactura (contabilidad)
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notas: { type: string, description: "Notas opcionales" }
+ *     responses:
+ *       200:
+ *         description: Prefactura rechazada
+ */
+router.put("/:id/reject-prefactura", ContabilidadAuth, solicitudesController.reject_prefactura.bind(solicitudesController));
+
+// Marcar como lista para facturación
+/**
+ * @openapi
+ * /solicitudes/{id}/mark-ready-for-billing:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Marcar como lista para facturación (contabilidad)
+ *     description: |
+ *       Marca la solicitud como lista para facturación cuando se carga en el componente de facturación.
+ *       Requiere que la prefactura esté aprobada.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Solicitud marcada como lista para facturación
+ */
+router.put("/:id/mark-ready-for-billing", ContabilidadAuth, solicitudesController.mark_ready_for_billing.bind(solicitudesController));
+
 export default router;
 
