@@ -8,8 +8,8 @@ import jwt from 'jsonwebtoken'
 /**
  * Middleware para operaciones de escritura en vehículos (crear, editar, eliminar):
  * - admin: administra su empresa
- * - coordinador: operación (asignaciones/validaciones)
- * - comercia: gestión comercial
+ * - coordinador_operador: operación (asignaciones/validaciones)
+ * - coordinador_comercial: gestión comercial
  */
 export const VehicleWriteAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -21,7 +21,7 @@ export const VehicleWriteAuth = async (req: Request, res: Response, next: NextFu
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["admin", "coordinador", "comercial"];
+        const allowedRoles = ["admin", "coordinador_operador", "coordinador_comercial"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para realizar esta operación");
         }

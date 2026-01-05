@@ -16,6 +16,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     // Cliente y contacto
     cliente: { type: MongoIdRef, ref: "Client", required: true }, // CLIENTE
     contacto: { type: String, required: true }, // CONTACTO
+    contacto_phone: { type: String, required: false }, // Número de teléfono del contacto
 
     // Ruta
     origen: { type: String, required: true }, // ORIGEN
@@ -126,8 +127,9 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     // Metadata
     created: { type: Date, default: new Date() },
     created_by: { type: MongoIdRef, ref: "User" }, // Usuario que creó el registro
+    last_modified_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que hizo la última modificación
     status: { type: String, required: true, enum: ["pending", "accepted", "rejected"], default: "pending" },
-    service_status: { type: String, required: true, enum: ["sin_asignacion", "not-started", "started", "finished"], default: "sin_asignacion" }
+    service_status: { type: String, required: true, enum: ["pendiente_de_asignacion", "sin_asignacion", "not-started", "started", "finished"], default: "pendiente_de_asignacion" }
 });
 
 // Índices para mejorar el rendimiento de búsquedas

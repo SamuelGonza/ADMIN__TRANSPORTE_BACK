@@ -349,7 +349,13 @@ export class SolicitudesController {
     public async start_service(req: Request, res: Response) {
         try {
             const { id } = req.params;
-            const response = await this.solicitudesService.start_service({ solicitud_id: id });
+            const user_role = (req as AuthRequest).user?.role;
+            const user_id = (req as AuthRequest).user?._id;
+            const response = await this.solicitudesService.start_service({ 
+                solicitud_id: id,
+                user_role,
+                user_id
+            });
             res.status(200).json({
                 message: "Servicio iniciado correctamente",
                 data: response
@@ -531,13 +537,13 @@ export class SolicitudesController {
     public async set_financial_values(req: Request, res: Response) {
         try {
             const { id } = req.params;
-            const { valor_a_facturar, valor_cancelado } = req.body;
+            const { valor_a_facturar } = req.body;
             const comercial_id = (req as AuthRequest).user?._id;
 
-            if (!valor_a_facturar || !valor_cancelado) {
+            if (!valor_a_facturar) {
                 res.status(400).json({
                     ok: false,
-                    message: "valor_a_facturar y valor_cancelado son requeridos"
+                    message: "valor_a_facturar es requerido"
                 });
                 return;
             }
@@ -546,13 +552,12 @@ export class SolicitudesController {
                 solicitud_id: id,
                 comercial_id: comercial_id as string,
                 payload: {
-                    valor_a_facturar: Number(valor_a_facturar),
-                    valor_cancelado: Number(valor_cancelado)
+                    valor_a_facturar: Number(valor_a_facturar)
                 }
             });
 
             res.status(200).json({
-                message: "Valores financieros establecidos correctamente",
+                message: "Valores de venta establecidos correctamente",
                 data: response
             });
         } catch (error) {
@@ -565,7 +570,49 @@ export class SolicitudesController {
             }
             res.status(500).json({
                 ok: false,
-                message: "Error al establecer valores financieros"
+                message: "Error al establecer valores de venta"
+            });
+            return;
+        }
+    }
+
+    public async set_costs(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { valor_cancelado } = req.body;
+            const operador_id = (req as AuthRequest).user?._id;
+
+            if (!valor_cancelado) {
+                res.status(400).json({
+                    ok: false,
+                    message: "valor_cancelado es requerido"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.set_costs_by_operador({
+                solicitud_id: id,
+                operador_id: operador_id as string,
+                payload: {
+                    valor_cancelado: Number(valor_cancelado)
+                }
+            });
+
+            res.status(200).json({
+                message: "Valores de costos establecidos correctamente",
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al establecer valores de costos"
             });
             return;
         }

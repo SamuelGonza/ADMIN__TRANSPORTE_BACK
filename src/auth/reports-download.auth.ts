@@ -8,7 +8,8 @@ import jwt from 'jsonwebtoken'
 /**
  * Middleware para descargar reportes PDF (fichas técnicas, manifiestos):
  * - contabilidad: puede descargar reportes
- * - coordinador: puede descargar reportes
+ * - coordinador_operador: puede descargar reportes
+ * - coordinador_comercial: puede descargar reportes
  * - admin: puede descargar reportes
  * - superadmon: puede descargar reportes
  */
@@ -22,7 +23,7 @@ export const ReportsDownloadAuth = async (req: Request, res: Response, next: Nex
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador", "contabilidad"];
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para descargar este reporte");
         }

@@ -15,9 +15,8 @@ export const ConductorAuth = async (req: Request, res: Response, next: NextFunct
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        // Conductores, operadores, coordinadores, admin y superadmon pueden acceder
-        // (comercia NO debe acceder a endpoints de conductor)
-        const allowedRoles = ["superadmon", "admin", "coordinador", "operador", "conductor"];
+        // Conductores, coordinadores (operador y comercial), contabilidad, admin y superadmon pueden acceder
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad", "conductor"];
         if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
 
         (req as AuthRequest).user = {

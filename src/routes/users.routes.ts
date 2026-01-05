@@ -285,7 +285,7 @@ router.post("/logout", SessionAuth, usersController.logout.bind(usersController)
  *             properties:
  *               full_name: { type: string }
  *               document: { type: object }
- *               role: { type: string, example: "operador" }
+ *               role: { type: string, example: "coordinador_operador" }
  *               contact: { type: object }
  *               email: { type: string, format: email }
  *               password: { type: string, description: "Solo si is_new_company=true" }

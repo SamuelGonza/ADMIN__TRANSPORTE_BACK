@@ -22,6 +22,7 @@ export interface BitacoraSolicitud extends Document {
     // Cliente y contacto
     cliente: ObjectId; // CLIENTE (referencia a modelo de clientes)
     contacto: string; // CONTACTO
+    contacto_phone?: string; // Número de teléfono del contacto
 
     // Ruta
     origen: string; // ORIGEN
@@ -98,6 +99,7 @@ export interface BitacoraSolicitud extends Document {
     // Metadata
     created: Date;
     created_by?: ObjectId; // Usuario que creó el registro
+    last_modified_by?: ObjectId; // Usuario que hizo la última modificación
     status: "pending" | "accepted" | "rejected" // Estado de aprobación
-    service_status: "sin_asignacion" | "not-started" | "started" | "finished" // Estado de ejecución del servicio
+    service_status: "pendiente_de_asignacion" | "sin_asignacion" | "not-started" | "started" | "finished" // Estado de ejecución del servicio
 }

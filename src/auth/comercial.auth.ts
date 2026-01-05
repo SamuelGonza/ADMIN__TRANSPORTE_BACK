@@ -6,10 +6,10 @@ import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
 /**
- * Acceso Comercial:
+ * Acceso Coordinador Comercial:
  * - superadmon: dueños de la app
  * - admin: administra su empresa
- * - comercia: gestión de clientes/contratos/captación
+ * - coordinador_comercial: gestión de clientes/contratos/captación, asigna valores de venta
  */
 export const ComercialAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -19,7 +19,7 @@ export const ComercialAuth = async (req: Request, res: Response, next: NextFunct
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "comercial"];
+        const allowedRoles = ["superadmon", "admin", "coordinador_comercial"];
         if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
 
         (req as AuthRequest).user = {

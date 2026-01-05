@@ -243,6 +243,8 @@ export class SolicitudesService {
             origen: string,
             destino: string,
             n_pasajeros: number,
+            contacto?: string, // Opcional: nombre del contacto (si no se proporciona, se usa el del cliente)
+            contacto_phone?: string, // Opcional: número de teléfono del contacto
             requested_passengers?: number,
             estimated_km?: number,
             estimated_hours?: number,
@@ -298,9 +300,10 @@ export class SolicitudesService {
                 estimated_km: payload.estimated_km,
                 estimated_hours: payload.estimated_hours,
 
-                // Datos del cliente (auto-rellenados)
+                // Datos del cliente (auto-rellenados, pero el cliente puede cambiar contacto y contacto_phone)
                 cliente: client_id,
-                contacto: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
+                contacto: payload.contacto || ((client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name),
+                contacto_phone: payload.contacto_phone || ((client.contacts && client.contacts.length > 0) ? client.contacts[0].phone : client.phone || ""),
 
                 // Campos vacíos/default que se llenarán después
                 he: "",
@@ -323,8 +326,9 @@ export class SolicitudesService {
 
                 // Metadata
                 created_by: client_id,
+                last_modified_by: client_id, // Cliente es quien crea, así que también es quien modifica inicialmente
                 status: "pending", // Requiere aprobación
-                service_status: "sin_asignacion" // Estado inicial: sin asignación de vehículo/conductor
+                service_status: "pendiente_de_asignacion" // Estado inicial: pendiente de asignación por coordinadores
             });
 
             await new_solicitud.save();
@@ -334,7 +338,7 @@ export class SolicitudesService {
                 // Obtener coordinadores de la empresa del cliente
                 const coordinators = await userModel.find({
                     company_id: client.company_id,
-                    role: { $in: ['coordinador', 'comercia', 'admin', 'superadmon'] },
+                    role: { $in: ['coordinador_operador', 'coordinador_comercial', 'admin', 'superadmon'] },
                     is_active: true,
                     is_delete: false
                 }).select('full_name email').lean();
@@ -515,6 +519,7 @@ export class SolicitudesService {
 
                 // Metadata
                 created_by: coordinator_id,
+                last_modified_by: coordinator_id, // Coordinador es quien crea, así que también es quien modifica inicialmente
                 status: "accepted", // Ya aprobado
                 service_status: "not-started"
             });
@@ -705,9 +710,14 @@ export class SolicitudesService {
             (solicitud as any).pricing_rate = pricing_rate;
             (solicitud as any).estimated_price = estimated_price;
 
-            // Cambiar estado de "sin_asignacion" a "not-started" cuando se asigna vehículo
-            if (solicitud.service_status === "sin_asignacion") {
+            // Cambiar estado de "pendiente_de_asignacion" o "sin_asignacion" a "not-started" cuando se asigna vehículo
+            if (solicitud.service_status === "pendiente_de_asignacion" || solicitud.service_status === "sin_asignacion") {
                 solicitud.service_status = "not-started";
+            }
+
+            // Guardar quién hizo la última modificación
+            if (accepted_by) {
+                (solicitud as any).last_modified_by = accepted_by;
             }
 
             await solicitud.save();
@@ -1345,25 +1355,41 @@ export class SolicitudesService {
     /**
      * Iniciar servicio
      * Cambia el service_status a "started"
+     * Solo el coordinador operador puede iniciar el servicio
      */
     public async start_service({
-        solicitud_id
+        solicitud_id,
+        user_role,
+        user_id
     }: {
-        solicitud_id: string
+        solicitud_id: string,
+        user_role?: string,
+        user_id?: string
     }) {
         try {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
+            // Validar que solo coordinador operador puede iniciar el servicio
+            if (user_role && user_role !== "coordinador_operador" && user_role !== "admin" && user_role !== "superadmon") {
+                throw new ResponseError(403, "Solo el coordinador operador puede iniciar el servicio");
+            }
+
             if (solicitud.status !== "accepted") {
                 throw new ResponseError(400, "Solo se pueden iniciar solicitudes aceptadas");
             }
 
-            if (solicitud.service_status !== "not-started") {
-                throw new ResponseError(400, "El servicio ya fue iniciado");
+            if (solicitud.service_status !== "not-started" && solicitud.service_status !== "pendiente_de_asignacion") {
+                throw new ResponseError(400, "El servicio ya fue iniciado o no está en estado válido para iniciar");
             }
 
             solicitud.service_status = "started";
+            
+            // Guardar quién inició el servicio
+            if (user_id) {
+                (solicitud as any).last_modified_by = user_id;
+            }
+            
             await solicitud.save();
 
             return {
@@ -1521,9 +1547,9 @@ export class SolicitudesService {
     }
 
     /**
-     * Establecer valores financieros (solo comercial)
-     * El comercial establece valor_a_facturar y valor_a_pagar (valor_cancelado)
-     * Automáticamente recalcula utilidad
+     * Establecer valores de venta (solo coordinador comercial)
+     * El coordinador comercial establece valor_a_facturar (valor de venta)
+     * Automáticamente recalcula utilidad si ya hay costos establecidos
      */
     public async set_financial_values_by_comercial({
         solicitud_id,
@@ -1533,27 +1559,29 @@ export class SolicitudesService {
         solicitud_id: string,
         comercial_id: string,
         payload: {
-            valor_a_facturar: number,  // Valor a facturar al cliente
-            valor_cancelado: number,    // Valor a pagar al transportador
+            valor_a_facturar: number,  // Valor a facturar al cliente (venta)
         }
     }) {
         try {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
-            // Actualizar valores
+            // Actualizar valor de venta
             solicitud.valor_a_facturar = payload.valor_a_facturar;
-            solicitud.valor_cancelado = payload.valor_cancelado;
 
-            // Calcular utilidad automáticamente
+            // Calcular utilidad automáticamente si ya hay costos establecidos
             const total_gastos = (solicitud.total_gastos_operacionales || 0);
-            const utilidad = payload.valor_a_facturar - payload.valor_cancelado - total_gastos;
+            const valor_cancelado = solicitud.valor_cancelado || 0;
+            const utilidad = payload.valor_a_facturar - valor_cancelado - total_gastos;
             const porcentaje_utilidad = payload.valor_a_facturar > 0 
                 ? (utilidad / payload.valor_a_facturar) * 100 
                 : 0;
 
             solicitud.utilidad = utilidad;
             solicitud.porcentaje_utilidad = porcentaje_utilidad;
+
+            // Guardar quién hizo la última modificación
+            (solicitud as any).last_modified_by = comercial_id;
 
             await solicitud.save();
 
@@ -1580,12 +1608,64 @@ export class SolicitudesService {
             await this.calcular_liquidacion({ solicitud_id });
 
             return {
-                message: "Valores financieros establecidos exitosamente",
+                message: "Valores de venta establecidos exitosamente",
                 solicitud: solicitud.toObject()
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "No se pudieron establecer los valores financieros");
+            throw new ResponseError(500, "No se pudieron establecer los valores de venta");
+        }
+    }
+
+    /**
+     * Establecer valores de costos (solo coordinador operador)
+     * El coordinador operador establece valor_cancelado (costos)
+     * Automáticamente recalcula utilidad si ya hay valores de venta establecidos
+     */
+    public async set_costs_by_operador({
+        solicitud_id,
+        payload,
+        operador_id
+    }: {
+        solicitud_id: string,
+        operador_id: string,
+        payload: {
+            valor_cancelado: number,    // Valor a pagar al transportador (costos)
+        }
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Actualizar valor de costos
+            solicitud.valor_cancelado = payload.valor_cancelado;
+
+            // Calcular utilidad automáticamente si ya hay valores de venta establecidos
+            const total_gastos = (solicitud.total_gastos_operacionales || 0);
+            const valor_a_facturar = solicitud.valor_a_facturar || 0;
+            const utilidad = valor_a_facturar - payload.valor_cancelado - total_gastos;
+            const porcentaje_utilidad = valor_a_facturar > 0 
+                ? (utilidad / valor_a_facturar) * 100 
+                : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+
+            // Guardar quién hizo la última modificación
+            (solicitud as any).last_modified_by = operador_id;
+
+            await solicitud.save();
+
+            // Recalcular liquidación para actualizar PaymentSection
+            await this.calcular_liquidacion({ solicitud_id });
+
+            return {
+                message: "Valores de costos establecidos exitosamente",
+                solicitud: solicitud.toObject()
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron establecer los valores de costos");
         }
     }
 
@@ -1687,10 +1767,18 @@ export class SolicitudesService {
 
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
-            // Ocultar utilidades si es coordinador
-            if (user_role === "coordinador") {
-                delete (solicitud as any).utilidad;
-                delete (solicitud as any).porcentaje_utilidad;
+            // Aplicar permisos de visualización según el rol
+            if (user_role === "coordinador_comercial") {
+                // Coordinador comercial: no ve costos
+                delete (solicitud as any).valor_cancelado;
+                delete (solicitud as any).doc_soporte;
+                delete (solicitud as any).fecha_cancelado;
+                delete (solicitud as any).n_egreso;
+            } else if (user_role === "coordinador_operador") {
+                // Coordinador operador: no ve valores de venta
+                delete (solicitud as any).valor_a_facturar;
+                delete (solicitud as any).n_factura;
+                delete (solicitud as any).fecha_factura;
             }
 
             return solicitud;
@@ -1716,7 +1804,7 @@ export class SolicitudesService {
             conductor_id?: string,
             vehiculo_id?: string,
             status?: "pending" | "accepted" | "rejected",
-            service_status?: "not-started" | "started" | "finished" | "sin_asignacion",
+            service_status?: "pendiente_de_asignacion" | "not-started" | "started" | "finished" | "sin_asignacion",
             empresa?: "travel" | "national",
             fecha_inicio?: Date,
             fecha_fin?: Date,
@@ -1755,11 +1843,21 @@ export class SolicitudesService {
                 .limit(limit)
                 .lean();
 
-            // Ocultar utilidades si es coordinador
-            if (user_role === "coordinador") {
+            // Aplicar permisos de visualización según el rol
+            if (user_role === "coordinador_comercial") {
+                // Coordinador comercial: no ve costos
                 solicitudes.forEach((solicitud: any) => {
-                    delete solicitud.utilidad;
-                    delete solicitud.porcentaje_utilidad;
+                    delete solicitud.valor_cancelado;
+                    delete solicitud.doc_soporte;
+                    delete solicitud.fecha_cancelado;
+                    delete solicitud.n_egreso;
+                });
+            } else if (user_role === "coordinador_operador") {
+                // Coordinador operador: no ve valores de venta
+                solicitudes.forEach((solicitud: any) => {
+                    delete solicitud.valor_a_facturar;
+                    delete solicitud.n_factura;
+                    delete solicitud.fecha_factura;
                 });
             }
 

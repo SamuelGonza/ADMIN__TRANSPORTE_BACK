@@ -9,4 +9,7 @@ const BitacoraSchema: Schema = new Schema<Bitacora>({
     created: {type: Date, required: true},
 })
 
+// Índice único para evitar bitácoras duplicadas por compañía, año y mes
+BitacoraSchema.index({ company_id: 1, year: 1, month: 1 }, { unique: true });
+
 export default mongoose.model<Bitacora>("Bitacora", BitacoraSchema)

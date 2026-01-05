@@ -6,10 +6,10 @@ import { NextFunction, Request, Response } from "express";
 import jwt from 'jsonwebtoken'
 
 /**
- * Middleware para operador, contabilidad y coordinador:
- * - operador: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
- * - contabilidad: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
- * - coordinador: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
+ * Middleware para coordinadores (comercial y operador), contabilidad:
+ * - coordinador_operador: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
+ * - coordinador_comercial: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios
+ * - contabilidad: puede crear y ver reportes preoperacionales y operacionales, ver conductores, crear y ver servicios (funciones del antiguo operador)
  * - También permite acceso a admin y superadmon
  */
 export const OperadorContabilidadAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -22,7 +22,7 @@ export const OperadorContabilidadAuth = async (req: Request, res: Response, next
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador", "operador", "contabilidad"];
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos");
         }

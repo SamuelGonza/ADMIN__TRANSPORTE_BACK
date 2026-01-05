@@ -5,22 +5,27 @@ import { TokenSessionPayload } from "@/utils/generate";
 import { NextFunction, Request, Response } from "express";
 import jwt from 'jsonwebtoken'
 
-export const CoordinadorAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Middleware para ambos coordinadores (comercial y operador):
+ * - coordinador_operador: asigna costos, puede iniciar servicios
+ * - coordinador_comercial: asigna valores de venta
+ * Ambos pueden hacer las mismas funciones de coordinador y comercial
+ * También permite acceso a admin y superadmon
+ */
+export const CoordinadoresAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const token_session = req.cookies._session_token_;
 
-        if(!token_session) throw new ResponseError(401, "No se proporciono autorizacion")
+        if(!token_session) throw new ResponseError(401, "No se proporcionó autorización");
 
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
 
-        if(!decoded) if (!decoded) throw new ResponseError(401, "Token inválido");
+        if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        // Acceso Coordinador Operador:
-        // - superadmon: dueños
-        // - admin: administra su empresa
-        // - coordinador_operador: operación (asignaciones/validaciones), asigna costos, puede iniciar servicios
-        const allowedRoles = ["superadmon", "admin", "coordinador_operador"];
-        if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial"];
+        if(!allowedRoles.includes(decoded.role)) {
+            throw new ResponseError(401, "No tienes permisos");
+        }
 
         (req as AuthRequest).user = {
             _id: decoded._id,
@@ -28,7 +33,7 @@ export const CoordinadorAuth = async (req: Request, res: Response, next: NextFun
             company_id: decoded.company_id
         };
 
-        next()
+        next();
     } catch (error) {
         if (error instanceof ResponseError) {
             res.status(error.statusCode).json({

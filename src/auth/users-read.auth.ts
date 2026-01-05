@@ -9,7 +9,8 @@ import jwt from 'jsonwebtoken'
  * Middleware para consultar usuarios:
  * - superadmon: puede ver todos los usuarios
  * - admin: solo usuarios de su company_id
- * - coordinador: solo usuarios de su company_id
+ * - coordinador_operador: solo usuarios de su company_id
+ * - coordinador_comercial: solo usuarios de su company_id
  * - contabilidad: solo usuarios de su company_id
  * - calidad: solo usuarios de su company_id (si existe este rol)
  */
@@ -23,7 +24,7 @@ export const UsersReadAuth = async (req: Request, res: Response, next: NextFunct
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador", "contabilidad", "comercial", "operador"];
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para consultar usuarios");
         }

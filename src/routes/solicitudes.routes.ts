@@ -268,13 +268,14 @@ router.get("/my-services", ConductorAuth, solicitudesController.get_my_solicitud
  */
 router.get("/my-services/:id", ConductorAuth, solicitudesController.get_my_solicitud_by_id.bind(solicitudesController));
 
-// Iniciar servicio (conductor)
+// Iniciar servicio (solo coordinador operador)
 /**
  * @openapi
  * /solicitudes/{id}/start:
  *   put:
  *     tags: [Solicitudes]
- *     summary: Iniciar servicio (conductor)
+ *     summary: Iniciar servicio (coordinador operador)
+ *     description: Solo el coordinador operador puede iniciar el servicio
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -286,7 +287,7 @@ router.get("/my-services/:id", ConductorAuth, solicitudesController.get_my_solic
  *       200:
  *         description: Servicio iniciado
  */
-router.put("/:id/start", ConductorAuth, solicitudesController.start_service.bind(solicitudesController));
+router.put("/:id/start", CoordinadorAuth, solicitudesController.start_service.bind(solicitudesController));
 
 // Finalizar servicio (conductor)
 /**
@@ -575,16 +576,16 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  */
 router.put("/:id/accept", CoordinadorAuth, solicitudesController.accept_solicitud.bind(solicitudesController));
 
-// Establecer valores financieros (solo comercial)
+// Establecer valores de venta (solo coordinador comercial)
 /**
  * @openapi
  * /solicitudes/{id}/set-financial-values:
  *   put:
  *     tags: [Solicitudes]
- *     summary: Establecer valores financieros (comercial)
+ *     summary: Establecer valores de venta (coordinador comercial)
  *     description: |
- *       El comercial establece el valor a facturar al cliente y el valor a pagar al transportador.
- *       La utilidad se calcula automáticamente.
+ *       El coordinador comercial establece el valor a facturar al cliente (venta).
+ *       La utilidad se calcula automáticamente si ya hay costos establecidos.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -599,14 +600,45 @@ router.put("/:id/accept", CoordinadorAuth, solicitudesController.accept_solicitu
  *           schema:
  *             type: object
  *             properties:
- *               valor_a_facturar: { type: number, description: "Valor a facturar al cliente" }
- *               valor_cancelado: { type: number, description: "Valor a pagar al transportador" }
- *             required: [valor_a_facturar, valor_cancelado]
+ *               valor_a_facturar: { type: number, description: "Valor a facturar al cliente (venta)" }
+ *             required: [valor_a_facturar]
  *     responses:
  *       200:
- *         description: Valores establecidos correctamente
+ *         description: Valores de venta establecidos correctamente
  */
 router.put("/:id/set-financial-values", ComercialAuth, solicitudesController.set_financial_values.bind(solicitudesController));
+
+// Establecer valores de costos (solo coordinador operador)
+/**
+ * @openapi
+ * /solicitudes/{id}/set-costs:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Establecer valores de costos (coordinador operador)
+ *     description: |
+ *       El coordinador operador establece el valor a pagar al transportador (costos).
+ *       La utilidad se calcula automáticamente si ya hay valores de venta establecidos.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               valor_cancelado: { type: number, description: "Valor a pagar al transportador (costos)" }
+ *             required: [valor_cancelado]
+ *     responses:
+ *       200:
+ *         description: Valores de costos establecidos correctamente
+ */
+router.put("/:id/set-costs", CoordinadorAuth, solicitudesController.set_costs.bind(solicitudesController));
 
 // Rechazar solicitud pendiente
 /**
