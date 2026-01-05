@@ -87,3 +87,10 @@ router.get("/:id", OperadorContabilidadAuth, bitacoraController.get_bitacora_by_
 
 export default router;
 
+
+
+
+
+
+
+

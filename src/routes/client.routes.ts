@@ -167,11 +167,13 @@ router.post("/logout", SessionAuth, clientController.logout.bind(clientControlle
  *                   cobro:
  *                     type: object
  *                     properties:
- *                       modo_default: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva] }
+ *                       modo_default: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
  *                       por_hora: { type: number }
  *                       por_kilometro: { type: number }
  *                       por_distancia: { type: number }
  *                       tarifa_amva: { type: number }
+ *                       por_viaje: { type: number }
+ *                       por_trayecto: { type: number }
  *                   notes: { type: string }
  *                 required: [periodo_presupuesto, valor_presupuesto]
  *             required: [name, email]

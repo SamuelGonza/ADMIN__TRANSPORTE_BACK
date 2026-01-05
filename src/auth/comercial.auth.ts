@@ -40,3 +40,10 @@ export const ComercialAuth = async (req: Request, res: Response, next: NextFunct
 };
 
 
+
+
+
+
+
+
+

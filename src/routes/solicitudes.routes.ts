@@ -2,6 +2,7 @@ import { Router } from "express";
 import { SolicitudesController } from "@/controllers/solicitudes.controller";
 import { ClienteAuth } from "@/auth/cliente.auth";
 import { CoordinadorAuth } from "@/auth/coordinador.auth";
+import { ComercialAuth } from "@/auth/comercial.auth";
 import { GestionAuth } from "@/auth/gestion.auth";
 import { OperadorAuth } from "@/auth/operador.auth";
 import { ContabilidadAuth } from "@/auth/contabilidad.auth";
@@ -370,6 +371,82 @@ router.get("/vehicle/preview/:placa", CoordinadorAuth, solicitudesController.pre
  */
 router.post("/:id/suggest-vehicles", CoordinadorAuth, solicitudesController.suggest_vehicle_allocation.bind(solicitudesController));
 
+// Buscar vehículos disponibles para cantidad de pasajeros
+/**
+ * @openapi
+ * /solicitudes/find-vehicles:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Buscar vehículos disponibles para cantidad de pasajeros
+ *     description: |
+ *       Busca vehículos disponibles para una cantidad de pasajeros en una fecha y hora específica.
+ *       Devuelve vehículos disponibles y en servicio (con flag).
+ *       Prioriza vehículos propios > afiliados > externos, luego por capacidad de asientos.
+ *     security:
+ *       - sessionCookie: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               requested_passengers:
+ *                 type: number
+ *                 description: Cantidad de pasajeros solicitados
+ *                 example: 200
+ *               fecha:
+ *                 type: string
+ *                 format: date-time
+ *                 description: Fecha del servicio
+ *                 example: "2024-12-15T00:00:00.000Z"
+ *               hora_inicio:
+ *                 type: string
+ *                 description: Hora de inicio del servicio (formato HH:MM)
+ *                 example: "08:00"
+ *               vehicle_type:
+ *                 type: string
+ *                 description: Tipo de vehículo (opcional)
+ *                 enum: [bus, buseta, buseton, camioneta, campero, micro, van]
+ *             required: [requested_passengers, fecha, hora_inicio]
+ *     responses:
+ *       200:
+ *         description: Lista de vehículos disponibles y en servicio
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     requested_passengers:
+ *                       type: number
+ *                     total_available_seats:
+ *                       type: number
+ *                     total_vehicles_needed:
+ *                       type: number
+ *                     remaining_passengers:
+ *                       type: number
+ *                     can_fulfill:
+ *                       type: boolean
+ *                     distribution:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     available_vehicles:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                     in_service_vehicles:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ */
+router.post("/find-vehicles", CoordinadorAuth, solicitudesController.find_vehicles_for_passengers.bind(solicitudesController));
+
 // Confirmar asignación multi-vehículo (persistir)
 /**
  * @openapi
@@ -465,6 +542,7 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  *     summary: Aceptar solicitud pendiente (coordinador)
  *     description: |
  *       Acepta una solicitud `pending` y asigna vehículo por `placa` (y opcionalmente conductor).
+ *       Nota: Los valores financieros NO se establecen aquí. El comercial debe usar PUT /solicitudes/:id/set-financial-values.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -483,24 +561,52 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  *               empresa: { type: string, enum: [travel, national] }
  *               placa: { type: string, example: "ABC123" }
  *               conductor_id: { type: string, description: "Opcional: elegir conductor del listado del vehículo" }
- *               nombre_cuenta_cobro: { type: string }
- *               valor_cancelado: { type: number }
- *               valor_a_facturar: { type: number }
- *               utilidad: { type: number }
- *               porcentaje_utilidad: { type: number }
  *               requested_passengers: { type: number }
  *               estimated_km: { type: number }
  *               estimated_hours: { type: number }
  *               contract_id: { type: string }
  *               contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract] }
  *               contract_charge_amount: { type: number }
- *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva] }
- *             required: [he, empresa, placa, nombre_cuenta_cobro, valor_cancelado, valor_a_facturar, utilidad, porcentaje_utilidad]
+ *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
+ *             required: [he, empresa, placa]
  *     responses:
  *       200:
  *         description: Solicitud aceptada
  */
 router.put("/:id/accept", CoordinadorAuth, solicitudesController.accept_solicitud.bind(solicitudesController));
+
+// Establecer valores financieros (solo comercial)
+/**
+ * @openapi
+ * /solicitudes/{id}/set-financial-values:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Establecer valores financieros (comercial)
+ *     description: |
+ *       El comercial establece el valor a facturar al cliente y el valor a pagar al transportador.
+ *       La utilidad se calcula automáticamente.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               valor_a_facturar: { type: number, description: "Valor a facturar al cliente" }
+ *               valor_cancelado: { type: number, description: "Valor a pagar al transportador" }
+ *             required: [valor_a_facturar, valor_cancelado]
+ *     responses:
+ *       200:
+ *         description: Valores establecidos correctamente
+ */
+router.put("/:id/set-financial-values", ComercialAuth, solicitudesController.set_financial_values.bind(solicitudesController));
 
 // Rechazar solicitud pendiente
 /**

@@ -73,7 +73,7 @@ router.post(
  * /vehicles/preoperational:
  *   post:
  *     tags: [Vehicles]
- *     summary: Crear reporte preoperacional (operador/conductor)
+ *     summary: Crear reporte preoperacional (operador/contabilidad/coordinador)
  *     description: |
  *       Enviar `vehicle_id`, `driver_id` (se ignora si el token es conductor), y `reports`.
  *       `reports` puede venir como JSON o string JSON.
@@ -111,7 +111,7 @@ router.post(
  */
 router.post(
     "/preoperational",
-    OperadorAuth,
+    OperadorContabilidadAuth,
     upload.any(), // Permite múltiples archivos con nombres dinámicos
     vehiclesController.create_preoperational_report.bind(vehiclesController)
 );
@@ -122,7 +122,7 @@ router.post(
  * /vehicles/operational-bills:
  *   post:
  *     tags: [Vehicles]
- *     summary: Registrar gastos operacionales (operador)
+ *     summary: Registrar gastos operacionales (operador/contabilidad/coordinador)
  *     description: |
  *       Enviar `vehicle_id`, `user_id` (opcional; el backend puede usar el usuario autenticado), `solicitud_id` (opcional para vincular gastos a una solicitud), y `bills`.
  *       `bills` puede venir como JSON o string JSON.
@@ -164,7 +164,7 @@ router.post(
  */
 router.post(
     "/operational-bills",
-    OperadorAuth,
+    OperadorContabilidadAuth,
     upload.any(), // Permite múltiples archivos con nombres dinámicos
     vehiclesController.create_operational_bills.bind(vehiclesController)
 );
@@ -789,6 +789,70 @@ router.put("/:id/owner", VehicleWriteAuth, vehiclesController.update_vehicle_own
  *               $ref: '#/components/schemas/MessageResponse'
  */
 router.put("/:id/driver", VehicleWriteAuth, vehiclesController.update_vehicle_driver.bind(vehiclesController));
+
+// Buscar vehículos por placa (autocomplete)
+/**
+ * @openapi
+ * /vehicles/search/placa:
+ *   get:
+ *     tags: [Vehicles]
+ *     summary: Buscar vehículos por placa (autocomplete)
+ *     description: |
+ *       Busca vehículos por placa mientras el usuario escribe. Devuelve resultados con todos los IDs populizados
+ *       (conductor, posibles conductores, propietario). Útil para autocompletar en inputs.
+ *       Usa `company_id` del token si existe, o se puede enviar por query.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: query
+ *         name: placa
+ *         required: true
+ *         schema: { type: string }
+ *         description: Placa o parte de la placa a buscar
+ *       - in: query
+ *         name: company_id
+ *         schema: { type: string }
+ *         description: Opcional. Filtrar por compañía
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 10 }
+ *         description: Límite de resultados
+ *     responses:
+ *       200:
+ *         description: Lista de vehículos encontrados
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       _id: { type: string }
+ *                       placa: { type: string }
+ *                       name: { type: string }
+ *                       seats: { type: number }
+ *                       type: { type: string }
+ *                       flota: { type: string }
+ *                       conductor:
+ *                         type: object
+ *                         properties:
+ *                           _id: { type: string }
+ *                           full_name: { type: string }
+ *                           phone: { type: string }
+ *                           email: { type: string }
+ *                       propietario:
+ *                         type: object
+ *                         properties:
+ *                           type: { type: string }
+ *                           company: { type: object }
+ *                           user: { type: object }
+ *               required: [message, data]
+ */
+router.get("/search/placa", SessionAuth, vehiclesController.search_vehicles_by_placa.bind(vehiclesController));
 
 export default router;
 

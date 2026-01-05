@@ -22,6 +22,8 @@ export class ContractsService {
                 por_kilometro?: number;
                 por_distancia?: number;
                 tarifa_amva?: number;
+                por_viaje?: number;
+                por_trayecto?: number;
             };
             notes?: string;
         };
@@ -31,18 +33,25 @@ export class ContractsService {
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
             if (String(client.company_id) !== String(company_id)) throw new ResponseError(401, "El cliente no pertenece a tu empresa");
 
-            // Reglas mínimas: Los contratos siempre son fijos y requieren presupuesto
+            // Reglas: Los contratos fijos requieren presupuesto, los ocasionales no
+            if (payload.tipo_contrato === "fijo") {
             if (payload.valor_presupuesto == null || Number.isNaN(payload.valor_presupuesto)) {
-                throw new ResponseError(400, "valor_presupuesto es requerido para el contrato");
+                    throw new ResponseError(400, "valor_presupuesto es requerido para contratos fijos");
             }
             if (!payload.periodo_presupuesto) {
-                throw new ResponseError(400, "periodo_presupuesto es requerido para el contrato");
+                    throw new ResponseError(400, "periodo_presupuesto es requerido para contratos fijos");
+                }
+            } else if (payload.tipo_contrato === "ocasional") {
+                // Los contratos ocasionales no requieren presupuesto
+                if (payload.valor_presupuesto != null) {
+                    throw new ResponseError(400, "Los contratos ocasionales no deben tener presupuesto");
+                }
             }
 
             const contrato = await contractModel.create({
                 company_id,
                 client_id: payload.client_id,
-                tipo_contrato: "fijo", // Siempre fijo
+                tipo_contrato: payload.tipo_contrato,
                 cobro: payload.cobro || undefined,
                 periodo_presupuesto: payload.periodo_presupuesto,
                 valor_presupuesto: payload.valor_presupuesto,
@@ -76,7 +85,7 @@ export class ContractsService {
             if (company_id) query.company_id = company_id;
             const contrato = await contractModel
                 .findOne(query)
-                .populate("client_id", "name contact_name contact_phone email")
+                .populate("client_id", "name contacts phone email")
                 .populate("created_by", "full_name email role")
                 .lean();
             if (!contrato) throw new ResponseError(404, "Contrato no encontrado");
@@ -84,6 +93,31 @@ export class ContractsService {
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo obtener el contrato");
+        }
+    }
+
+    public async get_all_contracts({
+        company_id,
+        only_active = false
+    }: {
+        company_id?: string;
+        only_active?: boolean;
+    }) {
+        try {
+            const query: any = {};
+            if (company_id) query.company_id = company_id;
+            if (only_active) query.is_active = true;
+
+            const contratos = await contractModel
+                .find(query)
+                .populate("client_id", "name contacts phone email")
+                .populate("created_by", "full_name email role")
+                .sort({ created: -1 })
+                .lean();
+            return contratos;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron listar los contratos");
         }
     }
 
@@ -130,6 +164,8 @@ export class ContractsService {
                 por_kilometro?: number;
                 por_distancia?: number;
                 tarifa_amva?: number;
+                por_viaje?: number;
+                por_trayecto?: number;
             };
             is_active: boolean;
             notes: string;

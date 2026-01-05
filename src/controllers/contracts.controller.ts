@@ -49,6 +49,26 @@ export class ContractsController {
         }
     }
 
+    public async get_all_contracts(req: Request, res: Response) {
+        try {
+            const { only_active } = req.query;
+            const user_company_id = (req as AuthRequest).user?.company_id;
+
+            const contracts = await this.contractsService.get_all_contracts({
+                company_id: user_company_id,
+                only_active: only_active === "true" || only_active === "1"
+            });
+
+            res.status(200).json({ message: "Contratos obtenidos correctamente", data: contracts });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({ ok: false, message: error.message });
+                return;
+            }
+            res.status(500).json({ ok: false, message: "Error al listar contratos" });
+        }
+    }
+
     public async get_contracts_by_client(req: Request, res: Response) {
         try {
             const { client_id } = req.params;
@@ -121,6 +141,12 @@ export class ContractsController {
         }
     }
 }
+
+
+
+
+
+
 
 
 

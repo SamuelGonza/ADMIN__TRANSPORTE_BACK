@@ -1,9 +1,9 @@
 import { Document, ObjectId } from "mongoose";
 
-export type ContractType = "fijo"; // Solo contratos fijos con presupuesto. Los servicios sin contrato son ocasionales.
+export type ContractType = "fijo" | "ocasional"; // Contratos fijos con presupuesto o contratos ocasionales sin presupuesto
 export type ContractBudgetPeriod = "anio" | "mes" | "semana" | "dia";
 export type ContractHistoryEventType = "budget_set" | "service_charge" | "manual_adjust";
-export type ContractPricingMode = "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva";
+export type ContractPricingMode = "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva" | "por_viaje" | "por_trayecto";
 
 export interface ContractHistoryEvent {
     type: ContractHistoryEventType;
@@ -36,6 +36,8 @@ export interface Contract extends Document {
         por_kilometro?: number;   // COP por km
         por_distancia?: number;   // COP por trayecto (valor fijo)
         tarifa_amva?: number;     // COP por tarifa AMVA (valor fijo)
+        por_viaje?: number;       // COP por viaje (valor fijo)
+        por_trayecto?: number;    // COP por trayecto (valor fijo)
     };
 
     // Presupuesto/consumo (requerido para contratos fijos)

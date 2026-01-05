@@ -19,6 +19,7 @@ import mongoose from 'mongoose';
 import fs from "fs";
 import path from "path";
 import { renderHtmlToPdfBuffer } from "@/utils/pdf";
+import { PaymentSectionService } from './payment_section.service';
 
 export class SolicitudesService {
     private static ClientService = new ClientService()
@@ -50,7 +51,7 @@ export class SolicitudesService {
             if (!estimated_km || estimated_km <= 0) return undefined;
             return estimated_km * pricing_rate;
         }
-        if (pricing_mode === "por_distancia" || pricing_mode === "tarifa_amva") {
+        if (pricing_mode === "por_distancia" || pricing_mode === "tarifa_amva" || pricing_mode === "por_viaje" || pricing_mode === "por_trayecto") {
             return pricing_rate;
         }
         return undefined;
@@ -299,7 +300,7 @@ export class SolicitudesService {
 
                 // Datos del cliente (auto-rellenados)
                 cliente: client_id,
-                contacto: client.contact_name,
+                contacto: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
 
                 // Campos vacíos/default que se llenarán después
                 he: "",
@@ -309,15 +310,9 @@ export class SolicitudesService {
                 novedades: "",
 
                 // Vehículo y conductor (se asignarán al aceptar)
-                vehiculo_id: null,
-                placa: "",
-                tipo_vehiculo: "",
-                flota: "",
-                conductor: null,
-                conductor_phone: "",
+                // Estos campos son opcionales y se llenarán cuando se asigne vehículo
 
                 // Datos financieros (se llenarán al aceptar)
-                nombre_cuenta_cobro: "",
                 valor_cancelado: 0,
                 doc_soporte: "",
                 n_egreso: "",
@@ -329,7 +324,7 @@ export class SolicitudesService {
                 // Metadata
                 created_by: client_id,
                 status: "pending", // Requiere aprobación
-                service_status: "not-started"
+                service_status: "sin_asignacion" // Estado inicial: sin asignación de vehículo/conductor
             });
 
             await new_solicitud.save();
@@ -352,7 +347,7 @@ export class SolicitudesService {
                     await send_coordinator_new_solicitud({
                         coordinator_name: coordinator.full_name,
                         coordinator_email: coordinator.email,
-                        client_name: client.contact_name || client.name,
+                        client_name: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
                         fecha: fecha_formatted,
                         hora_inicio: payload.hora_inicio,
                         origen: payload.origen,
@@ -399,18 +394,14 @@ export class SolicitudesService {
             placa: string, // Se usa placa en lugar de vehiculo_id
             conductor_id?: string, // Opcional: si no se proporciona, se usa el conductor principal del vehículo
 
-            // Datos financieros
-            nombre_cuenta_cobro: string,
-            valor_cancelado: number,
-            valor_a_facturar: number,
-            utilidad: number,
-            porcentaje_utilidad: number,
+            // Datos financieros (opcionales - el comercial los establecerá después)
+            // valor_cancelado, valor_a_facturar, utilidad, porcentaje_utilidad removidos
 
             // Contrato (opcional)
             contract_id?: string,
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract",
             contract_charge_amount?: number,
-            pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva",
+            pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva" | "por_viaje" | "por_trayecto",
         }
     }) {
         try {
@@ -491,7 +482,7 @@ export class SolicitudesService {
 
                 // Cliente
                 cliente: payload.cliente_id,
-                contacto: client.contact_name,
+                contacto: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
 
                 // Campos que se llenarán al finalizar
                 hora_final: "",
@@ -506,12 +497,11 @@ export class SolicitudesService {
                 conductor: target_driver_id,
                 conductor_phone: conductor.contact?.phone || "",
 
-                // Datos financieros
-                nombre_cuenta_cobro: payload.nombre_cuenta_cobro,
-                valor_cancelado: payload.valor_cancelado,
-                valor_a_facturar: payload.valor_a_facturar,
-                utilidad: payload.utilidad,
-                porcentaje_utilidad: payload.porcentaje_utilidad,
+                // Datos financieros (inicializados en 0, el comercial los establecerá después)
+                valor_cancelado: 0,
+                valor_a_facturar: 0,
+                utilidad: 0,
+                porcentaje_utilidad: 0,
 
                 // Contrato (si aplica)
                 contract_id: payload.contract_id || undefined,
@@ -531,26 +521,45 @@ export class SolicitudesService {
 
             await new_solicitud.save();
 
+            // Crear sección de pagos automáticamente con la información del vehículo asignado
+            const paymentSectionService = new PaymentSectionService();
+            await paymentSectionService.create_or_update_payment_section({
+                solicitud_id: new_solicitud._id.toString(),
+                company_id: String(client.company_id),
+                vehicle_assignments: [{
+                    vehiculo_id: (vehicle as any)._id.toString(),
+                    placa: vehicle.placa,
+                    conductor_id: target_driver_id,
+                    flota: vehicle.flota
+                }],
+                created_by: coordinator_id
+            });
+
             // Descontar presupuesto si aplica (contrato fijo/ocasional)
+            // Nota: El cargo al contrato se hará después cuando el comercial establezca valor_a_facturar
             if (payload.contract_charge_mode === "within_contract") {
                 if (!payload.contract_id) throw new ResponseError(400, "contract_id es requerido cuando contract_charge_mode = within_contract");
-                const amount = payload.contract_charge_amount && payload.contract_charge_amount > 0
-                    ? payload.contract_charge_amount
-                    : payload.valor_a_facturar;
+                
+                // Solo cargar al contrato si se proporciona contract_charge_amount explícitamente
+                // Si no, se cargará después cuando el comercial establezca valor_a_facturar
+                if (payload.contract_charge_amount && payload.contract_charge_amount > 0) {
+                    const amount = payload.contract_charge_amount;
 
-                await SolicitudesService.ContractsService.charge_contract({
-                    contract_id: payload.contract_id,
-                    company_id: String(client.company_id),
-                    amount,
-                    solicitud_id: new_solicitud._id.toString(),
-                    created_by: coordinator_id,
-                    notes: `Cargo automático por solicitud ${new_solicitud.he || new_solicitud._id.toString()}`
-                });
+                    await SolicitudesService.ContractsService.charge_contract({
+                        contract_id: payload.contract_id,
+                        company_id: String(client.company_id),
+                        amount,
+                        solicitud_id: new_solicitud._id.toString(),
+                        created_by: coordinator_id,
+                        notes: `Cargo automático por solicitud ${new_solicitud.he || new_solicitud._id.toString()}`
+                    });
 
-                // Asegurar consistencia en la solicitud
+                    // Asegurar consistencia en la solicitud
+                    new_solicitud.contract_charge_amount = amount as any;
+                }
+
                 new_solicitud.contract_id = payload.contract_id as any;
                 new_solicitud.contract_charge_mode = "within_contract" as any;
-                new_solicitud.contract_charge_amount = amount as any;
                 await new_solicitud.save();
             }
 
@@ -558,7 +567,7 @@ export class SolicitudesService {
             try {
                 const fecha_formatted = dayjs(payload.fecha).format('DD/MM/YYYY');
                 await send_client_solicitud_approved({
-                    client_name: client.contact_name || client.name,
+                    client_name: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
                     client_email: client.email,
                     fecha: fecha_formatted,
                     hora_inicio: payload.hora_inicio,
@@ -591,16 +600,12 @@ export class SolicitudesService {
         solicitud_id: string,
         company_id?: string,
         accepted_by?: string,
-        payload: {
+            payload: {
             he: string,
             empresa: "travel" | "national",
             placa: string, // Ahora se usa placa en lugar de vehiculo_id
             conductor_id?: string, // Permite elegir conductor del listado del vehículo
-            nombre_cuenta_cobro: string,
-            valor_cancelado: number,
-            valor_a_facturar: number,
-            utilidad: number,
-            porcentaje_utilidad: number,
+            // Valores financieros removidos - el comercial los establecerá después
             requested_passengers?: number,
             estimated_km?: number,
             estimated_hours?: number,
@@ -609,7 +614,7 @@ export class SolicitudesService {
             contract_id?: string,
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract",
             contract_charge_amount?: number,
-            pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva",
+            pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva" | "por_viaje" | "por_trayecto",
         }
     }) {
         try {
@@ -673,12 +678,8 @@ export class SolicitudesService {
             solicitud.conductor = target_driver_id as any;
             solicitud.conductor_phone = (conductor as any).contact?.phone || "";
 
-            // Asignar datos financieros
-            solicitud.nombre_cuenta_cobro = payload.nombre_cuenta_cobro;
-            solicitud.valor_cancelado = payload.valor_cancelado;
-            solicitud.valor_a_facturar = payload.valor_a_facturar;
-            solicitud.utilidad = payload.utilidad;
-            solicitud.porcentaje_utilidad = payload.porcentaje_utilidad;
+            // Datos financieros NO se asignan aquí - el comercial los establecerá después
+            // Se mantienen en 0 hasta que el comercial los defina
 
             // Contrato
             solicitud.contract_id = payload.contract_id as any;
@@ -704,29 +705,50 @@ export class SolicitudesService {
             (solicitud as any).pricing_rate = pricing_rate;
             (solicitud as any).estimated_price = estimated_price;
 
+            // Cambiar estado de "sin_asignacion" a "not-started" cuando se asigna vehículo
+            if (solicitud.service_status === "sin_asignacion") {
+                solicitud.service_status = "not-started";
+            }
+
             await solicitud.save();
 
-            // Descontar presupuesto si aplica
+            // Crear o actualizar sección de pagos automáticamente
+            const paymentSectionService = new PaymentSectionService();
+            await paymentSectionService.create_or_update_payment_section({
+                solicitud_id: solicitud._id.toString(),
+                company_id: company_id || String((await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) })).company_id),
+                vehicle_assignments: [{
+                    vehiculo_id: String(vehicleData.vehicle._id),
+                    placa: vehicleData.vehicle.placa,
+                    conductor_id: target_driver_id,
+                    flota: vehicleData.vehicle.flota
+                }],
+                created_by: accepted_by
+            });
+
+            // Descontar presupuesto si aplica (solo si se proporciona contract_charge_amount)
+            // Nota: El cargo al contrato se hará después cuando el comercial establezca valor_a_facturar
             if (payload.contract_charge_mode === "within_contract") {
                 if (!payload.contract_id) throw new ResponseError(400, "contract_id es requerido cuando contract_charge_mode = within_contract");
-                const amount = payload.contract_charge_amount && payload.contract_charge_amount > 0
-                    ? payload.contract_charge_amount
-                    : payload.valor_a_facturar;
+                
+                // Solo cargar al contrato si se proporciona contract_charge_amount explícitamente
+                // Si no, se cargará después cuando el comercial establezca valor_a_facturar
+                if (payload.contract_charge_amount && payload.contract_charge_amount > 0) {
+                    const client_doc = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
+                    await SolicitudesService.ContractsService.charge_contract({
+                        contract_id: payload.contract_id,
+                        company_id: String(client_doc.company_id),
+                        amount: payload.contract_charge_amount,
+                        solicitud_id: solicitud._id.toString(),
+                        created_by: accepted_by || undefined,
+                        notes: `Cargo automático por aceptación de solicitud ${solicitud.he || solicitud._id.toString()}`
+                    });
 
-                // buscar cliente para company_id correcto
-                const client_doc = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
-                await SolicitudesService.ContractsService.charge_contract({
-                    contract_id: payload.contract_id,
-                    company_id: String(client_doc.company_id),
-                    amount,
-                    solicitud_id: solicitud._id.toString(),
-                    created_by: accepted_by || undefined,
-                    notes: `Cargo automático por aceptación de solicitud ${solicitud.he || solicitud._id.toString()}`
-                });
+                    solicitud.contract_charge_amount = payload.contract_charge_amount as any;
+                }
 
                 solicitud.contract_id = payload.contract_id as any;
                 solicitud.contract_charge_mode = "within_contract" as any;
-                solicitud.contract_charge_amount = amount as any;
                 await solicitud.save();
             }
 
@@ -882,6 +904,227 @@ export class SolicitudesService {
     }
 
     /**
+     * Buscar vehículos disponibles para una cantidad de pasajeros
+     * Devuelve vehículos disponibles y en servicio (con flag)
+     * Prioriza vehículos propios > afiliados > externos, luego por capacidad
+     */
+    public async find_vehicles_for_passengers({
+        company_id,
+        requested_passengers,
+        fecha,
+        hora_inicio,
+        vehicle_type
+    }: {
+        company_id: string;
+        requested_passengers: number;
+        fecha: Date;
+        hora_inicio: string;
+        vehicle_type?: string;
+    }) {
+        try {
+            if (!requested_passengers || requested_passengers <= 0) {
+                throw new ResponseError(400, "requested_passengers debe ser mayor a 0");
+            }
+
+            if (!fecha || !hora_inicio) {
+                throw new ResponseError(400, "fecha y hora_inicio son requeridos");
+            }
+
+            // Buscar todos los vehículos de la compañía (propios, afiliados, externos)
+            const vehicleQuery: any = {
+                $or: [
+                    { "owner_id.type": "Company", "owner_id.company_id": company_id },
+                    { "owner_id.type": "User", "owner_id.company_id": company_id },
+                ]
+            };
+            if (vehicle_type) vehicleQuery.type = vehicle_type;
+
+            const vehicles = await vehicleModel
+                .find(vehicleQuery)
+                .select("_id placa seats type flota driver_id possible_drivers n_numero_interno owner_id")
+                .populate("driver_id", "full_name contact.phone")
+                .populate("possible_drivers", "full_name contact.phone")
+                .lean();
+
+            if (!vehicles || vehicles.length === 0) {
+                throw new ResponseError(404, "No hay vehículos disponibles");
+            }
+
+            // Convertir fecha a formato para comparación (solo fecha, sin hora)
+            const fechaComparacion = new Date(fecha);
+            fechaComparacion.setHours(0, 0, 0, 0);
+            const fechaFinComparacion = new Date(fechaComparacion);
+            fechaFinComparacion.setHours(23, 59, 59, 999);
+
+            // Función para convertir hora string a minutos desde medianoche
+            const horaAMinutos = (hora: string): number => {
+                const [horas, minutos] = hora.split(':').map(Number);
+                return horas * 60 + (minutos || 0);
+            };
+
+            const horaInicioMinutos = horaAMinutos(hora_inicio);
+
+            // Verificar disponibilidad de cada vehículo
+            const vehiclesWithAvailability = await Promise.all(
+                vehicles.map(async (vehicle: any) => {
+                    // Buscar solicitudes activas para este vehículo en la fecha
+                    // Considerar tanto vehiculo_id principal como vehicle_assignments
+                    const solicitudesActivas = await solicitudModel.find({
+                        $or: [
+                            { vehiculo_id: vehicle._id },
+                            { "vehicle_assignments.vehiculo_id": vehicle._id }
+                        ],
+                        fecha: {
+                            $gte: fechaComparacion,
+                            $lte: fechaFinComparacion
+                        },
+                        status: { $ne: "rejected" }, // No considerar rechazadas
+                        service_status: { $ne: "finished" } // No considerar finalizadas
+                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments").lean();
+
+                    let isInService = false;
+                    let conflictingService: any = null;
+
+                    // Verificar si hay solapamiento de horarios
+                    for (const solicitud of solicitudesActivas) {
+                        const solHoraInicio = horaAMinutos(solicitud.hora_inicio || "00:00");
+                        let solHoraFin: number;
+                        let horaFinalStr: string;
+
+                        if (solicitud.hora_final && solicitud.hora_final.trim() !== "") {
+                            // Si hay hora_final, usarla
+                            solHoraFin = horaAMinutos(solicitud.hora_final);
+                            horaFinalStr = solicitud.hora_final;
+                        } else {
+                            // Si no, calcular basándose en total_horas
+                            const solTotalHoras = solicitud.total_horas || 0;
+                            solHoraFin = solHoraInicio + (solTotalHoras * 60);
+                            const horasFin = Math.floor(solHoraFin / 60);
+                            const minutosFin = solHoraFin % 60;
+                            horaFinalStr = `${horasFin.toString().padStart(2, '0')}:${minutosFin.toString().padStart(2, '0')}`;
+                        }
+
+                        // Si la hora solicitada está dentro del rango del servicio existente
+                        if (horaInicioMinutos >= solHoraInicio && horaInicioMinutos < solHoraFin) {
+                            isInService = true;
+                            conflictingService = {
+                                hora_inicio: solicitud.hora_inicio,
+                                hora_final: horaFinalStr,
+                                fecha: solicitud.fecha
+                            };
+                            break;
+                        }
+                    }
+
+                    // Determinar prioridad de flota (propio > afiliado > externo)
+                    const flotaPriority = vehicle.flota === "propio" ? 3 : 
+                                         vehicle.flota === "afiliado" ? 2 : 1;
+
+                    return {
+                        vehiculo: {
+                            _id: String(vehicle._id),
+                            placa: vehicle.placa,
+                            n_numero_interno: vehicle.n_numero_interno,
+                            seats: vehicle.seats,
+                            type: vehicle.type,
+                            flota: vehicle.flota
+                        },
+                        seats: Number(vehicle.seats || 0),
+                        is_available: !isInService,
+                        is_in_service: isInService,
+                        conflicting_service: conflictingService,
+                        flota_priority: flotaPriority,
+                        driver: vehicle.driver_id ? {
+                            _id: String((vehicle.driver_id as any)._id || vehicle.driver_id),
+                            full_name: (vehicle.driver_id as any).full_name || "",
+                            phone: (vehicle.driver_id as any).contact?.phone || ""
+                        } : null,
+                        possible_drivers: Array.isArray(vehicle.possible_drivers) 
+                            ? vehicle.possible_drivers
+                                .filter(Boolean)
+                                .map((d: any) => ({
+                                    _id: String(d._id || d),
+                                    full_name: d.full_name || "",
+                                    phone: d.contact?.phone || ""
+                                }))
+                            : []
+                    };
+                })
+            );
+
+            // Ordenar: primero por disponibilidad (disponibles primero), luego por flota, luego por capacidad
+            vehiclesWithAvailability.sort((a, b) => {
+                // Disponibles primero
+                if (a.is_available !== b.is_available) {
+                    return a.is_available ? -1 : 1;
+                }
+                // Luego por prioridad de flota (mayor prioridad primero)
+                if (a.flota_priority !== b.flota_priority) {
+                    return b.flota_priority - a.flota_priority;
+                }
+                // Finalmente por capacidad (mayor primero)
+                return b.seats - a.seats;
+            });
+
+            // Separar disponibles y en servicio
+            const availableVehicles = vehiclesWithAvailability.filter(v => v.is_available);
+            const inServiceVehicles = vehiclesWithAvailability.filter(v => !v.is_available);
+
+            // Calcular distribución de pasajeros usando solo vehículos disponibles
+            const distribution: Array<{
+                vehiculo: any;
+                seats: number;
+                assigned_passengers: number;
+                is_available: boolean;
+                is_in_service: boolean;
+                conflicting_service?: any;
+            }> = [];
+
+            let remaining = requested_passengers;
+            for (const vehicle of availableVehicles) {
+                if (remaining <= 0) break;
+                if (vehicle.seats <= 0) continue;
+
+                const assigned = Math.min(vehicle.seats, remaining);
+                distribution.push({
+                    vehiculo: vehicle.vehiculo,
+                    seats: vehicle.seats,
+                    assigned_passengers: assigned,
+                    is_available: true,
+                    is_in_service: false
+                });
+                remaining -= assigned;
+            }
+
+            return {
+                requested_passengers,
+                total_available_seats: availableVehicles.reduce((sum, v) => sum + v.seats, 0),
+                total_vehicles_needed: distribution.length,
+                remaining_passengers: remaining,
+                can_fulfill: remaining === 0,
+                distribution,
+                available_vehicles: availableVehicles.map(v => ({
+                    ...v,
+                    assigned_passengers: 0 // No asignados aún
+                })),
+                in_service_vehicles: inServiceVehicles.map(v => ({
+                    vehiculo: v.vehiculo,
+                    seats: v.seats,
+                    is_available: false,
+                    is_in_service: true,
+                    conflicting_service: v.conflicting_service,
+                    message: `Este vehículo está en servicio el ${new Date(v.conflicting_service?.fecha || fecha).toLocaleDateString('es-ES')} de ${v.conflicting_service?.hora_inicio} a ${v.conflicting_service?.hora_final}. Puedes seleccionarlo para una fecha u hora posterior.`,
+                    driver: v.driver,
+                    possible_drivers: v.possible_drivers
+                }))
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron buscar vehículos disponibles");
+        }
+    }
+
+    /**
      * Confirmar asignación multi-vehículo (persistir en la solicitud)
      * Valida:
      * - suma de assigned_passengers >= requested_passengers
@@ -1016,6 +1259,7 @@ export class SolicitudesService {
 
     /**
      * Actualiza el bloque contable de un bus asignado dentro de la solicitud (por vehiculo_id)
+     * Valida que existan prefactura y preliquidación antes de permitir facturar
      */
     public async update_assignment_accounting({
         solicitud_id,
@@ -1036,6 +1280,20 @@ export class SolicitudesService {
 
             const target = assignments[idx];
             target.accounting = target.accounting || { pagos: [] };
+
+            // Validar prefactura y preliquidación antes de permitir facturar
+            if (payload.factura !== undefined && payload.factura.numero) {
+                // Verificar que existan prefactura y preliquidación
+                const tienePrefactura = target.accounting.prefactura && target.accounting.prefactura.numero;
+                const tienePreliquidacion = target.accounting.preliquidacion && target.accounting.preliquidacion.numero;
+                
+                if (!tienePrefactura) {
+                    throw new ResponseError(400, "No se puede facturar sin prefactura. Debe crear la prefactura primero.");
+                }
+                if (!tienePreliquidacion) {
+                    throw new ResponseError(400, "No se puede facturar sin preliquidación. Debe crear la preliquidación primero.");
+                }
+            }
 
             // shallow merge por secciones
             if (payload.prefactura !== undefined) target.accounting.prefactura = payload.prefactura;
@@ -1167,6 +1425,7 @@ export class SolicitudesService {
      * Calcular liquidación automática
      * Fórmula: Total Servicios Realizados - Gastos = Total a Pagar
      * Calcula: utilidad = valor_a_facturar - valor_cancelado - total_gastos_operacionales
+     * Actualiza las cuentas de cobro en la sección de pagos
      */
     public async calcular_liquidacion({
         solicitud_id
@@ -1205,6 +1464,44 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Actualizar sección de pagos con los nuevos valores
+            const paymentSectionService = new PaymentSectionService();
+            
+            // Obtener vehículos asignados a la solicitud
+            const vehicleIds: string[] = [];
+            if (solicitud.vehiculo_id) {
+                vehicleIds.push(String(solicitud.vehiculo_id));
+            }
+            if (solicitud.vehicle_assignments && solicitud.vehicle_assignments.length > 0) {
+                solicitud.vehicle_assignments.forEach((va: any) => {
+                    if (va.vehiculo_id && !vehicleIds.includes(String(va.vehiculo_id))) {
+                        vehicleIds.push(String(va.vehiculo_id));
+                    }
+                });
+            }
+
+            // Actualizar cada cuenta de cobro con los gastos operacionales
+            for (const vehicleId of vehicleIds) {
+                // Obtener gastos operacionales específicos de este vehículo
+                const gastosVehiculo = gastos.filter((g: any) => String(g.vehicle_id) === vehicleId);
+                const totalGastosVehiculo = gastosVehiculo.reduce((sum, gasto) => {
+                    const billsTotal = (gasto.bills || []).reduce((bSum: number, bill: any) => bSum + (bill.value || 0), 0);
+                    return sum + billsTotal;
+                }, 0);
+
+                // Calcular valor base (valor a pagar al propietario)
+                // Por ahora usamos valor_cancelado dividido entre vehículos, pero esto debería venir del contrato o cálculo específico
+                const valorBasePorVehiculo = vehicleIds.length > 0 ? (solicitud.valor_cancelado || 0) / vehicleIds.length : 0;
+
+                await paymentSectionService.update_cuenta_cobro_values({
+                    solicitud_id,
+                    vehiculo_id: vehicleId,
+                    valor_base: valorBasePorVehiculo,
+                    gastos_operacionales: totalGastosVehiculo,
+                    gastos_preoperacionales: 0 // Por ahora 0, se puede implementar después
+                });
+            }
+
             return {
                 message: "Liquidación calculada exitosamente",
                 data: {
@@ -1224,9 +1521,79 @@ export class SolicitudesService {
     }
 
     /**
+     * Establecer valores financieros (solo comercial)
+     * El comercial establece valor_a_facturar y valor_a_pagar (valor_cancelado)
+     * Automáticamente recalcula utilidad
+     */
+    public async set_financial_values_by_comercial({
+        solicitud_id,
+        payload,
+        comercial_id
+    }: {
+        solicitud_id: string,
+        comercial_id: string,
+        payload: {
+            valor_a_facturar: number,  // Valor a facturar al cliente
+            valor_cancelado: number,    // Valor a pagar al transportador
+        }
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Actualizar valores
+            solicitud.valor_a_facturar = payload.valor_a_facturar;
+            solicitud.valor_cancelado = payload.valor_cancelado;
+
+            // Calcular utilidad automáticamente
+            const total_gastos = (solicitud.total_gastos_operacionales || 0);
+            const utilidad = payload.valor_a_facturar - payload.valor_cancelado - total_gastos;
+            const porcentaje_utilidad = payload.valor_a_facturar > 0 
+                ? (utilidad / payload.valor_a_facturar) * 100 
+                : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+
+            await solicitud.save();
+
+            // Si hay contrato y está en modo "within_contract", cargar al contrato
+            if (solicitud.contract_charge_mode === "within_contract" && solicitud.contract_id) {
+                // Si aún no se ha cargado al contrato (contract_charge_amount es 0), cargarlo ahora
+                if (!solicitud.contract_charge_amount || solicitud.contract_charge_amount === 0) {
+                    const client_doc = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
+                    await SolicitudesService.ContractsService.charge_contract({
+                        contract_id: String(solicitud.contract_id),
+                        company_id: String(client_doc.company_id),
+                        amount: payload.valor_a_facturar,
+                        solicitud_id: solicitud._id.toString(),
+                        created_by: comercial_id,
+                        notes: `Cargo automático por establecimiento de valores financieros - Solicitud ${solicitud.he || solicitud._id.toString()}`
+                    });
+
+                    solicitud.contract_charge_amount = payload.valor_a_facturar as any;
+                    await solicitud.save();
+                }
+            }
+
+            // Recalcular liquidación para actualizar PaymentSection
+            await this.calcular_liquidacion({ solicitud_id });
+
+            return {
+                message: "Valores financieros establecidos exitosamente",
+                solicitud: solicitud.toObject()
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron establecer los valores financieros");
+        }
+    }
+
+    /**
      * Actualizar datos financieros
      * Para ir completando información durante el proceso
      * Automáticamente recalcula la liquidación si se actualizan valores financieros
+     * Valida que existan prefactura y preliquidación antes de permitir facturar
      */
     public async update_financial_data({
         solicitud_id,
@@ -1245,6 +1612,39 @@ export class SolicitudesService {
         try {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar prefactura y preliquidación antes de permitir facturar
+            if (payload.n_factura !== undefined && payload.n_factura) {
+                // Verificar que existan prefactura y preliquidación en todos los vehículos asignados
+                const assignments: any[] = (solicitud as any).vehicle_assignments || [];
+                let tieneTodosLosDocumentos = true;
+                const vehiculosSinDocumentos: string[] = [];
+
+                if (assignments.length > 0) {
+                    // Si hay vehicle_assignments, verificar cada uno
+                    for (const assignment of assignments) {
+                        const accounting = assignment.accounting || {};
+                        const tienePrefactura = accounting.prefactura && accounting.prefactura.numero;
+                        const tienePreliquidacion = accounting.preliquidacion && accounting.preliquidacion.numero;
+                        
+                        if (!tienePrefactura || !tienePreliquidacion) {
+                            tieneTodosLosDocumentos = false;
+                            vehiculosSinDocumentos.push(assignment.placa || String(assignment.vehiculo_id));
+                        }
+                    }
+                } else {
+                    // Si no hay vehicle_assignments, verificar si hay un vehículo único
+                    // En este caso, no podemos validar prefactura/preliquidación a nivel de solicitud
+                    // porque no están almacenados allí. Se asume que se validará en update_assignment_accounting
+                    // Por ahora, permitimos facturar si no hay vehicle_assignments (compatibilidad hacia atrás)
+                }
+
+                if (!tieneTodosLosDocumentos && assignments.length > 0) {
+                    throw new ResponseError(400, 
+                        `No se puede facturar sin prefactura y preliquidación. Vehículos pendientes: ${vehiculosSinDocumentos.join(", ")}`
+                    );
+                }
+            }
 
             // Actualizar solo los campos proporcionados
             if (payload.doc_soporte !== undefined) solicitud.doc_soporte = payload.doc_soporte;
@@ -1273,18 +1673,25 @@ export class SolicitudesService {
 
     /**
      * Obtener solicitud por ID con populate
+     * Oculta utilidades si el usuario es coordinador
      */
-    public async get_solicitud_by_id({ id }: { id: string }) {
+    public async get_solicitud_by_id({ id, user_role }: { id: string, user_role?: string }) {
         try {
             const solicitud = await solicitudModel
                 .findById(id)
-                .populate('cliente', 'name email contact_name contact_phone')
+                .populate('cliente', 'name email contacts phone')
                 .populate('vehiculo_id', 'placa type flota seats')
                 .populate('conductor', 'name phone email')
                 .populate('created_by', 'name email')
                 .lean();
 
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Ocultar utilidades si es coordinador
+            if (user_role === "coordinador") {
+                delete (solicitud as any).utilidad;
+                delete (solicitud as any).porcentaje_utilidad;
+            }
 
             return solicitud;
         } catch (error) {
@@ -1295,11 +1702,13 @@ export class SolicitudesService {
 
     /**
      * Obtener todas las solicitudes con filtros y paginación
+     * Oculta utilidades si el usuario es coordinador
      */
     public async get_all_solicitudes({
         filters,
         page = 1,
-        limit = 10
+        limit = 10,
+        user_role
     }: {
         filters: {
             bitacora_id?: string,
@@ -1307,13 +1716,14 @@ export class SolicitudesService {
             conductor_id?: string,
             vehiculo_id?: string,
             status?: "pending" | "accepted" | "rejected",
-            service_status?: "not-started" | "started" | "finished",
+            service_status?: "not-started" | "started" | "finished" | "sin_asignacion",
             empresa?: "travel" | "national",
             fecha_inicio?: Date,
             fecha_fin?: Date,
         },
         page?: number,
-        limit?: number
+        limit?: number,
+        user_role?: string
     }) {
         try {
             const query: any = {};
@@ -1337,13 +1747,21 @@ export class SolicitudesService {
 
             const solicitudes = await solicitudModel
                 .find(query)
-                .populate('cliente', 'name email contact_name')
+                .populate('cliente', 'name email contacts phone')
                 .populate('vehiculo_id', 'placa type')
                 .populate('conductor', 'name phone')
                 .sort({ created: -1 })
                 .skip(skip)
                 .limit(limit)
                 .lean();
+
+            // Ocultar utilidades si es coordinador
+            if (user_role === "coordinador") {
+                solicitudes.forEach((solicitud: any) => {
+                    delete solicitud.utilidad;
+                    delete solicitud.porcentaje_utilidad;
+                });
+            }
 
             const total = await solicitudModel.countDocuments(query);
 
@@ -1401,7 +1819,7 @@ export class SolicitudesService {
 
             const solicitudes = await solicitudModel
                 .find(query)
-                .populate('cliente', 'name email contact_name contact_phone phone')
+                .populate('cliente', 'name email contacts phone')
                 .populate('vehiculo_id', 'placa type flota seats name')
                 .sort({ fecha: -1, hora_inicio: -1 })
                 .skip(skip)
@@ -1443,7 +1861,7 @@ export class SolicitudesService {
                     conductor: conductor_id,
                     status: "accepted"
                 })
-                .populate('cliente', 'name email contact_name contact_phone phone')
+                .populate('cliente', 'name email contacts phone')
                 .populate('vehiculo_id', 'placa type flota seats name description')
                 .lean();
 

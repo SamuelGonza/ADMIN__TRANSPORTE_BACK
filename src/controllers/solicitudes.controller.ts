@@ -168,6 +168,59 @@ export class SolicitudesController {
     }
 
     /**
+     * Buscar vehículos disponibles para una cantidad de pasajeros
+     * Devuelve vehículos disponibles y en servicio (con flag)
+     */
+    public async find_vehicles_for_passengers(req: Request, res: Response) {
+        try {
+            const { requested_passengers, fecha, hora_inicio, vehicle_type } = req.body;
+            const company_id = (req as AuthRequest).user?.company_id;
+
+            if (!company_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "No se pudo identificar la compañía del usuario"
+                });
+                return;
+            }
+
+            if (!requested_passengers || !fecha || !hora_inicio) {
+                res.status(400).json({
+                    ok: false,
+                    message: "requested_passengers, fecha y hora_inicio son requeridos"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.find_vehicles_for_passengers({
+                company_id,
+                requested_passengers: Number(requested_passengers),
+                fecha: new Date(fecha),
+                hora_inicio,
+                vehicle_type
+            });
+
+            res.status(200).json({
+                message: "Vehículos encontrados correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al buscar vehículos disponibles"
+            });
+            return;
+        }
+    }
+
+    /**
      * Confirmar asignación multi-vehículo y persistirla en la solicitud
      * Body: { requested_passengers: number, assignments: [{vehiculo_id, conductor_id, assigned_passengers}] }
      */
@@ -391,7 +444,8 @@ export class SolicitudesController {
     public async get_solicitud_by_id(req: Request, res: Response) {
         try {
             const { id } = req.params;
-            const response = await this.solicitudesService.get_solicitud_by_id({ id });
+            const user_role = (req as AuthRequest).user?.role;
+            const response = await this.solicitudesService.get_solicitud_by_id({ id, user_role });
             res.status(200).json({
                 message: "Solicitud obtenida correctamente",
                 data: response
@@ -448,7 +502,8 @@ export class SolicitudesController {
             const response = await this.solicitudesService.get_all_solicitudes({
                 filters,
                 page: page ? Number(page) : 1,
-                limit: limit ? Number(limit) : 10
+                limit: limit ? Number(limit) : 10,
+                user_role: user?.role
             });
             res.status(200).json({
                 message: "Solicitudes obtenidas correctamente",
@@ -465,6 +520,52 @@ export class SolicitudesController {
             res.status(500).json({
                 ok: false,
                 message: "Error al obtener solicitudes"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Establecer valores financieros (solo comercial)
+     */
+    public async set_financial_values(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { valor_a_facturar, valor_cancelado } = req.body;
+            const comercial_id = (req as AuthRequest).user?._id;
+
+            if (!valor_a_facturar || !valor_cancelado) {
+                res.status(400).json({
+                    ok: false,
+                    message: "valor_a_facturar y valor_cancelado son requeridos"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.set_financial_values_by_comercial({
+                solicitud_id: id,
+                comercial_id: comercial_id as string,
+                payload: {
+                    valor_a_facturar: Number(valor_a_facturar),
+                    valor_cancelado: Number(valor_cancelado)
+                }
+            });
+
+            res.status(200).json({
+                message: "Valores financieros establecidos correctamente",
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al establecer valores financieros"
             });
             return;
         }

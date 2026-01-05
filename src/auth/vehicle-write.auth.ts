@@ -49,3 +49,10 @@ export const VehicleWriteAuth = async (req: Request, res: Response, next: NextFu
     }
 }
 
+
+
+
+
+
+
+

@@ -27,6 +27,8 @@ export class ClientService {
                 por_kilometro?: number;
                 por_distancia?: number;
                 tarifa_amva?: number;
+                por_viaje?: number;
+                por_trayecto?: number;
             };
             notes?: string;
         }
@@ -35,19 +37,30 @@ export class ClientService {
 
             const {
                 name,
-                contact_name,
-                contact_phone,
-                email
-            } = payload;
+                contacts,
+                email,
+                phone
+            } = payload as any;
 
             await this.verify_exist_client({ name, company_id })
+
+            // Manejar retrocompatibilidad: si viene contact_name/contact_phone, convertirlos a contacts
+            let contactsArray: Array<{ name: string; phone: string }> = [];
+            if (contacts && Array.isArray(contacts) && contacts.length > 0) {
+                contactsArray = contacts;
+            } else if ((payload as any).contact_name && (payload as any).contact_phone) {
+                // Retrocompatibilidad: convertir contact_name/contact_phone a contacts
+                contactsArray = [{ name: (payload as any).contact_name, phone: (payload as any).contact_phone }];
+            } else {
+                throw new ResponseError(400, "Se requiere al menos un contacto (name y phone)");
+            }
 
             const plane_password = generate_password()
             const hashed_password = await hash_password(plane_password)
             const new_client = await clientModel.create({
                 name,
-                contact_phone,
-                contact_name,
+                contacts: contactsArray,
+                phone: phone || contactsArray[0]?.phone || "", // Teléfono principal para retrocompatibilidad
                 email,
                 company_id,
                 password: hashed_password
@@ -72,9 +85,9 @@ export class ClientService {
                 });
             }
 
-            // Enviar correo al cliente sobre el registro y credenciales
+            // Enviar correo al cliente sobre el registro y credenciales (usar el primer contacto)
             await send_client_registration_credentials({
-                name: contact_name || name,
+                name: contactsArray[0]?.name || name,
                 email,
                 password: plane_password
             });
@@ -88,7 +101,7 @@ export class ClientService {
         try {
             const find_client = await clientModel
                 .findOne({ email })
-                .select("name contact_name contact_phone email company_id password")
+                .select("name contacts phone email company_id password")
                 .populate('company_id', 'name document');
 
             if (!find_client) throw new ResponseError(404, "Cuenta no encontrada");
@@ -104,8 +117,8 @@ export class ClientService {
                 client: {
                     _id: find_client._id,
                     name: find_client.name,
-                    contact_name: find_client.contact_name,
-                    contact_phone: find_client.contact_phone,
+                    contacts: find_client.contacts || [],
+                    phone: find_client.phone,
                     email: find_client.email,
                     company_id: (find_client.company_id as any)?._id,
                     company_name: (find_client.company_id as any)?.name,
@@ -160,12 +173,15 @@ export class ClientService {
                 query.email = { $regex: new RegExp(filters.email, 'i') };
             }
 
-            if (filters.contact_name) {
-                query.contact_name = { $regex: new RegExp(filters.contact_name, 'i') };
-            }
-
-            if (filters.contact_phone) {
-                query.contact_phone = { $regex: new RegExp(filters.contact_phone, 'i') };
+            // Búsqueda en el array de contactos
+            if (filters.contact_name || filters.contact_phone) {
+                query.$or = query.$or || [];
+                if (filters.contact_name) {
+                    query.$or.push({ "contacts.name": { $regex: new RegExp(filters.contact_name, 'i') } });
+                }
+                if (filters.contact_phone) {
+                    query.$or.push({ "contacts.phone": { $regex: new RegExp(filters.contact_phone, 'i') } });
+                }
             }
 
             // Calcular skip para paginación
@@ -217,19 +233,31 @@ export class ClientService {
         try {
             const {
                 name,
-                contact_name,
-                contact_phone,
+                contacts,
                 phone,
                 email
-            } = payload;
+            } = payload as any;
             const find_user = await clientModel.findById(id)
             if(!find_user) throw new ResponseError(404, "El cliente no fue encontrado")
 
             find_user.name = name;
-            find_user.contact_phone = contact_phone;
-            find_user.contact_name = contact_name;
-            find_user.phone = phone;
-            find_user.email = email
+            find_user.email = email;
+            
+            // Manejar retrocompatibilidad: si viene contact_name/contact_phone, convertirlos a contacts
+            if (contacts && Array.isArray(contacts) && contacts.length > 0) {
+                find_user.contacts = contacts;
+            } else if ((payload as any).contact_name && (payload as any).contact_phone) {
+                // Retrocompatibilidad: convertir contact_name/contact_phone a contacts
+                find_user.contacts = [{ name: (payload as any).contact_name, phone: (payload as any).contact_phone }];
+            }
+            
+            // Actualizar teléfono principal si se proporciona
+            if (phone !== undefined) {
+                find_user.phone = phone;
+            } else if (find_user.contacts && find_user.contacts.length > 0) {
+                // Si no se proporciona phone pero hay contactos, usar el primero
+                find_user.phone = find_user.contacts[0].phone;
+            }
             
             await find_user.save()
         } catch (error) {
@@ -250,10 +278,13 @@ export class ClientService {
             await find_user.save()
 
             // Obtener información del cliente para el email
-            const client_info = await clientModel.findById(id).select("name contact_name email").lean();
+            const client_info = await clientModel.findById(id).select("name contacts email").lean();
             if (client_info) {
+                const firstContactName = (client_info as any).contacts && (client_info as any).contacts.length > 0 
+                    ? (client_info as any).contacts[0].name 
+                    : client_info.name;
                 await send_client_new_password({
-                    name: client_info.contact_name || client_info.name,
+                    name: firstContactName,
                     email: client_info.email,
                     password: new_password_plane
                 });

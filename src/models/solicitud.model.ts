@@ -27,18 +27,18 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     // Estimación de precio (según contrato/tarifario)
     estimated_km: { type: Number, required: false },
     estimated_hours: { type: Number, required: false },
-    pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "tarifa_amva"] },
+    pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "tarifa_amva", "por_viaje", "por_trayecto"] },
     pricing_rate: { type: Number, required: false },
     estimated_price: { type: Number, required: false },
 
-    // Vehículo y conductor
-    vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: true }, // Referencia al vehículo
-    placa: { type: String, required: true }, // PLACA
-    tipo_vehiculo: { type: String, required: true }, // TIPO DE VEHÍCULO
-    n_pasajeros: { type: Number, required: true }, // N° PASAJEROS
-    flota: { type: String, required: true }, // FLOTA
-    conductor: { type: MongoIdRef, ref: "User", required: true }, // CONDUCTOR
-    conductor_phone: { type: String, required: true }, // Teléfono del conductor
+    // Vehículo y conductor (pueden ser null si está en estado "sin asignación")
+    vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: false }, // Referencia al vehículo
+    placa: { type: String, required: false }, // PLACA
+    tipo_vehiculo: { type: String, required: false }, // TIPO DE VEHÍCULO
+    n_pasajeros: { type: Number, required: false }, // N° PASAJEROS
+    flota: { type: String, required: false }, // FLOTA
+    conductor: { type: MongoIdRef, ref: "User", required: false }, // CONDUCTOR
+    conductor_phone: { type: String, required: false }, // Teléfono del conductor
 
     // Multi-vehículo (cuando se requieren varios buses)
     requested_passengers: { type: Number, required: false },
@@ -101,7 +101,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     },
 
     // Información financiera - Gastos
-    nombre_cuenta_cobro: { type: String, required: true }, // NOMBRE CUENTA DE COBRO
+    // nombre_cuenta_cobro ya no se usa aquí, se maneja en PaymentSection
     valor_cancelado: { type: Number, required: true, default: 0 }, // VALOR CANCELADO
     doc_soporte: { type: String, default: "" }, // DOC SOPORTE
     fecha_cancelado: { type: Date }, // FECHA CANCELADO
@@ -127,7 +127,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     created: { type: Date, default: new Date() },
     created_by: { type: MongoIdRef, ref: "User" }, // Usuario que creó el registro
     status: { type: String, required: true, enum: ["pending", "accepted", "rejected"], default: "pending" },
-    service_status: { type: String, required: true, enum: ["not-started", "started", "finished"], default: "not-started" }
+    service_status: { type: String, required: true, enum: ["sin_asignacion", "not-started", "started", "finished"], default: "sin_asignacion" }
 });
 
 // Índices para mejorar el rendimiento de búsquedas

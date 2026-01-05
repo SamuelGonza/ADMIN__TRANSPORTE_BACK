@@ -33,18 +33,18 @@ export interface BitacoraSolicitud extends Document {
     // Estimación de precio (según contrato/tarifario)
     estimated_km?: number;
     estimated_hours?: number;
-    pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva";
+    pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva" | "por_viaje" | "por_trayecto";
     pricing_rate?: number;
     estimated_price?: number;
 
-    // Vehículo y conductor
-    vehiculo_id: ObjectId; // Referencia al vehículo (permite populate)
-    placa: string; // PLACA (guardada también para búsquedas rápidas)
-    tipo_vehiculo: VehicleTypes | string; // TIPO DE VEHÍCULO (denormalizado para reportes)
-    n_pasajeros: number; // N° PASAJEROS
-    flota: VehicleFlota | string; // FLOTA (denormalizado para reportes)
-    conductor: ObjectId; // CONDUCTOR (referencia al usuario)
-    conductor_phone: string; // Teléfono del conductor (denormalizado)
+    // Vehículo y conductor (pueden ser null si está en estado "sin asignación")
+    vehiculo_id?: ObjectId; // Referencia al vehículo (permite populate)
+    placa?: string; // PLACA (guardada también para búsquedas rápidas)
+    tipo_vehiculo?: VehicleTypes | string; // TIPO DE VEHÍCULO (denormalizado para reportes)
+    n_pasajeros?: number; // N° PASAJEROS
+    flota?: VehicleFlota | string; // FLOTA (denormalizado para reportes)
+    conductor?: ObjectId; // CONDUCTOR (referencia al usuario)
+    conductor_phone?: string; // Teléfono del conductor (denormalizado)
 
     // Multi-vehículo (cuando un servicio requiere varios buses)
     requested_passengers?: number; // total requerido (ej. 200)
@@ -73,7 +73,7 @@ export interface BitacoraSolicitud extends Document {
     }>;
 
     // Información financiera - Gastos
-    nombre_cuenta_cobro: string; // NOMBRE CUENTA DE COBRO
+    // nombre_cuenta_cobro ya no se usa aquí, se maneja en PaymentSection
     valor_cancelado: number; // VALOR CANCELADO
     doc_soporte: string; // DOC SOPORTE
     fecha_cancelado: Date; // FECHA CANCELADO
@@ -99,5 +99,5 @@ export interface BitacoraSolicitud extends Document {
     created: Date;
     created_by?: ObjectId; // Usuario que creó el registro
     status: "pending" | "accepted" | "rejected" // Estado de aprobación
-    service_status: "not-started" | "started" | "finished" // Estado de ejecución del servicio
+    service_status: "sin_asignacion" | "not-started" | "started" | "finished" // Estado de ejecución del servicio
 }

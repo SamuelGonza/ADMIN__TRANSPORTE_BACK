@@ -591,4 +591,43 @@ export class VehiclesController {
             return;
         }
     }
+
+    public async search_vehicles_by_placa(req: Request, res: Response) {
+        try {
+            const { placa, limit } = req.query;
+            const company_id = (req as AuthRequest).user?.company_id || (req.query.company_id as string);
+
+            if (!placa || typeof placa !== 'string' || placa.trim().length === 0) {
+                res.status(200).json({
+                    message: "Búsqueda realizada",
+                    data: []
+                });
+                return;
+            }
+
+            const response = await this.vehicleServices.search_vehicles_by_placa({
+                placa: placa.trim(),
+                company_id: company_id as string,
+                limit: limit ? Number(limit) : 10
+            });
+
+            res.status(200).json({
+                message: "Búsqueda realizada correctamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al buscar vehículos por placa"
+            });
+            return;
+        }
+    }
 }

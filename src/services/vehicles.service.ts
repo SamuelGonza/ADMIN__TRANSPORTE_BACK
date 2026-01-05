@@ -625,28 +625,226 @@ export class VehicleServices {
     }
 
     /**
+     * Buscar vehículos por placa con autocomplete (búsqueda parcial)
+     * Devuelve múltiples resultados con todos los IDs populizados
+     */
+    public async search_vehicles_by_placa({ placa, company_id, limit = 10 }: { placa: string, company_id?: string, limit?: number }) {
+        try {
+            if (!placa || placa.trim().length === 0) {
+                return [];
+            }
+
+            // Construir query para búsqueda parcial (case-insensitive)
+            // Primero buscar TODOS los vehículos con esa placa, sin filtrar por company_id
+            const query: any = { 
+                placa: { $regex: placa.trim().toUpperCase(), $options: 'i' } 
+            };
+
+            // Obtener todos los vehículos con esa placa (sin filtrar por company_id todavía)
+            const vehicles = await vehicleModel
+                .find(query)
+                .populate({
+                    path: 'driver_id',
+                    select: 'full_name document contact email avatar role company_id'
+                })
+                .populate({
+                    path: 'possible_drivers',
+                    select: 'full_name document contact email avatar role company_id'
+                })
+                .populate({
+                    path: 'owner_id.company_id',
+                    select: 'company_name document logo'
+                })
+                .populate({
+                    path: 'owner_id.user_id',
+                    select: 'full_name document contact email'
+                })
+                .limit(limit * 3) // Obtener más resultados para filtrar después
+                .sort({ placa: 1 }) // Ordenar por placa
+                .lean();
+
+            // Si no hay company_id, retornar todos los resultados
+            if (!company_id) {
+                return vehicles.slice(0, limit).map((vehicle: any) => {
+                    const driver = vehicle.driver_id as any;
+                    const ownerCompany = vehicle.owner_id?.company_id as any;
+                    const ownerUser = vehicle.owner_id?.user_id as any;
+
+                    return {
+                        _id: vehicle._id,
+                        n_numero_interno: vehicle.n_numero_interno,
+                        placa: vehicle.placa,
+                        name: vehicle.name,
+                        description: vehicle.description,
+                        seats: vehicle.seats,
+                        type: vehicle.type,
+                        flota: vehicle.flota,
+                        picture: vehicle.picture,
+                        technical_sheet: vehicle.technical_sheet,
+                        possible_drivers: vehicle.possible_drivers,
+                        conductor: driver ? {
+                            _id: driver._id,
+                            full_name: driver.full_name,
+                            document: driver.document,
+                            phone: driver.contact?.phone || '',
+                            email: driver.email || driver.contact?.email,
+                            avatar: driver.avatar,
+                            role: driver.role,
+                            company_id: driver.company_id
+                        } : null,
+                        propietario: {
+                            type: vehicle.owner_id?.type,
+                            company: ownerCompany ? {
+                                _id: ownerCompany._id,
+                                company_name: ownerCompany.company_name,
+                                document: ownerCompany.document,
+                                logo: ownerCompany.logo
+                            } : null,
+                            user: ownerUser ? {
+                                _id: ownerUser._id,
+                                full_name: ownerUser.full_name,
+                                document: ownerUser.document,
+                                phone: ownerUser.contact?.phone
+                            } : null
+                        }
+                    };
+                });
+            }
+
+            // Filtrar vehículos según company_id
+            // Incluir: propios, de usuarios de la compañía, y afiliados donde el conductor pertenece a la compañía
+            const filteredVehicles = vehicles.filter((vehicle: any) => {
+                // Normalizar IDs para comparación
+                const normalizeId = (id: any) => {
+                    if (!id) return null;
+                    if (typeof id === 'string') return id;
+                    return String(id._id || id);
+                };
+
+                const targetCompanyId = String(company_id);
+                
+                // 1. Vehículos propios: owner_id.company_id coincide
+                const ownerCompanyId = normalizeId(vehicle.owner_id?.company_id);
+                if (ownerCompanyId === targetCompanyId) {
+                    return true;
+                }
+
+                // 2. Vehículos de usuarios: verificar si el usuario tiene company_id que coincide
+                if (vehicle.owner_id?.type === "User" && vehicle.owner_id?.user_id) {
+                    const userId = vehicle.owner_id.user_id;
+                    // Si el usuario tiene company_id poblado, verificar
+                    if (userId.company_id) {
+                        const userCompanyId = normalizeId(userId.company_id);
+                        if (userCompanyId === targetCompanyId) {
+                            return true;
+                        }
+                    }
+                }
+
+                // 3. Vehículos afiliados: verificar que el conductor pertenezca a la compañía
+                if (vehicle.flota === "afiliado") {
+                    if (vehicle.driver_id) {
+                        const driverCompanyId = normalizeId(vehicle.driver_id?.company_id);
+                        if (driverCompanyId === targetCompanyId) {
+                            return true;
+                        }
+                    }
+                    // Si el vehículo es afiliado pero no tiene conductor o el conductor no tiene company_id,
+                    // también verificar si alguno de los possible_drivers tiene el company_id correcto
+                    if (vehicle.possible_drivers && Array.isArray(vehicle.possible_drivers) && vehicle.possible_drivers.length > 0) {
+                        const hasDriverWithCompany = vehicle.possible_drivers.some((driver: any) => {
+                            const driverCompanyId = normalizeId(driver?.company_id);
+                            return driverCompanyId === targetCompanyId;
+                        });
+                        if (hasDriverWithCompany) {
+                            return true;
+                        }
+                    }
+                }
+
+                // 4. Vehículos externos: si el conductor pertenece a la compañía
+                if (vehicle.flota === "externo") {
+                    const driverCompanyId = normalizeId(vehicle.driver_id?.company_id);
+                    if (driverCompanyId === targetCompanyId) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }).slice(0, limit);
+
+            // Formatear la respuesta
+            return filteredVehicles.map((vehicle: any) => {
+                const driver = vehicle.driver_id as any;
+                const ownerCompany = vehicle.owner_id?.company_id as any;
+                const ownerUser = vehicle.owner_id?.user_id as any;
+
+                return {
+                    _id: vehicle._id,
+                    n_numero_interno: vehicle.n_numero_interno,
+                    placa: vehicle.placa,
+                    name: vehicle.name,
+                    description: vehicle.description,
+                    seats: vehicle.seats,
+                    type: vehicle.type,
+                    flota: vehicle.flota,
+                    picture: vehicle.picture,
+                    technical_sheet: vehicle.technical_sheet,
+                    possible_drivers: vehicle.possible_drivers,
+                    conductor: driver ? {
+                        _id: driver._id,
+                        full_name: driver.full_name,
+                        document: driver.document,
+                        phone: driver.contact?.phone || '',
+                        email: driver.email || driver.contact?.email,
+                        avatar: driver.avatar,
+                        role: driver.role,
+                        company_id: driver.company_id
+                    } : null,
+                    propietario: {
+                        type: vehicle.owner_id?.type,
+                        company: ownerCompany ? {
+                            _id: ownerCompany._id,
+                            company_name: ownerCompany.company_name,
+                            document: ownerCompany.document,
+                            logo: ownerCompany.logo
+                        } : null,
+                        user: ownerUser ? {
+                            _id: ownerUser._id,
+                            full_name: ownerUser.full_name,
+                            document: ownerUser.document,
+                            phone: ownerUser.contact?.phone
+                        } : null
+                    }
+                };
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "No se pudieron buscar los vehículos por placa");
+        }
+    }
+
+    /**
      * Buscar vehículo por placa con toda la información del conductor y propietario
      * Útil para asignar vehículos a solicitudes ingresando solo la placa
      */
     public async get_vehicle_by_placa({ placa, company_id }: { placa: string, company_id?: string }) {
         try {
-            // Buscar vehículo por placa
-            const query: any = { placa: placa.toUpperCase().trim() };
-            
-            // Si se proporciona company_id, filtrar por vehículos de esa compañía
-            if (company_id) {
-                query['owner_id.company_id'] = company_id;
-            }
+            // Buscar vehículo por placa (búsqueda exacta, case-insensitive)
+            const query: any = { 
+                placa: { $regex: `^${placa.toUpperCase().trim()}$`, $options: 'i' } 
+            };
 
-            const vehicle = await vehicleModel
-                .findOne(query)
+            // Buscar TODOS los vehículos con esa placa primero (sin filtrar por company_id)
+            const vehicles = await vehicleModel
+                .find(query)
                 .populate({
                     path: 'driver_id',
-                    select: 'full_name document contact email avatar role'
+                    select: 'full_name document contact email avatar role company_id'
                 })
                 .populate({
                     path: 'possible_drivers',
-                    select: 'full_name document contact email avatar role'
+                    select: 'full_name document contact email avatar role company_id'
                 })
                 .populate({
                     path: 'owner_id.company_id',
@@ -658,51 +856,126 @@ export class VehicleServices {
                 })
                 .lean();
 
-            if (!vehicle) throw new ResponseError(404, "No se encontró vehículo con esa placa");
+            if (!vehicles || vehicles.length === 0) {
+                throw new ResponseError(404, "No se encontró vehículo con esa placa");
+            }
 
-            // Estructurar la respuesta con toda la información necesaria
-            const driver = vehicle.driver_id as any;
-            const ownerCompany = vehicle.owner_id?.company_id as any;
-            const ownerUser = vehicle.owner_id?.user_id as any;
+            // Helper para formatear la respuesta en el formato esperado por get_vehicle_by_placa
+            const formatVehicleResponseForPlaca = (v: any) => {
+                const driver = v.driver_id as any;
+                const ownerCompany = v.owner_id?.company_id as any;
+                const ownerUser = v.owner_id?.user_id as any;
 
-            return {
-                vehicle: {
-                    _id: vehicle._id,
-                    n_numero_interno: (vehicle as any).n_numero_interno,
-                    placa: vehicle.placa,
-                    name: vehicle.name,
-                    description: vehicle.description,
-                    seats: vehicle.seats,
-                    type: vehicle.type,
-                    flota: vehicle.flota,
-                    picture: vehicle.picture,
-                    technical_sheet: (vehicle as any).technical_sheet,
-                    possible_drivers: (vehicle as any).possible_drivers
-                },
-                conductor: driver ? {
-                    _id: driver._id,
-                    full_name: driver.full_name,
-                    document: driver.document,
-                    phone: driver.contact?.phone || '',
-                    email: driver.email || driver.contact?.email,
-                    avatar: driver.avatar
-                } : null,
-                propietario: {
-                    type: vehicle.owner_id?.type,
-                    company: ownerCompany ? {
-                        _id: ownerCompany._id,
-                        company_name: ownerCompany.company_name,
-                        document: ownerCompany.document,
-                        logo: ownerCompany.logo
+                return {
+                    vehicle: {
+                        _id: v._id,
+                        n_numero_interno: v.n_numero_interno,
+                        placa: v.placa,
+                        name: v.name,
+                        description: v.description,
+                        seats: v.seats,
+                        type: v.type,
+                        flota: v.flota,
+                        picture: v.picture,
+                        technical_sheet: v.technical_sheet,
+                        possible_drivers: v.possible_drivers
+                    },
+                    conductor: driver ? {
+                        _id: driver._id,
+                        full_name: driver.full_name,
+                        document: driver.document,
+                        phone: driver.contact?.phone || '',
+                        email: driver.email || driver.contact?.email,
+                        avatar: driver.avatar
                     } : null,
-                    user: ownerUser ? {
-                        _id: ownerUser._id,
-                        full_name: ownerUser.full_name,
-                        document: ownerUser.document,
-                        phone: ownerUser.contact?.phone
-                    } : null
-                }
+                    propietario: {
+                        type: v.owner_id?.type,
+                        company: ownerCompany ? {
+                            _id: ownerCompany._id,
+                            company_name: ownerCompany.company_name,
+                            document: ownerCompany.document,
+                            logo: ownerCompany.logo
+                        } : null,
+                        user: ownerUser ? {
+                            _id: ownerUser._id,
+                            full_name: ownerUser.full_name,
+                            document: ownerUser.document,
+                            phone: ownerUser.contact?.phone
+                        } : null
+                    }
+                };
             };
+
+            // Si no hay company_id, retornar el primer vehículo encontrado
+            if (!company_id) {
+                const vehicle = vehicles[0];
+                return formatVehicleResponseForPlaca(vehicle);
+            }
+
+            // Filtrar vehículos según company_id (misma lógica que search_vehicles_by_placa)
+            const normalizeId = (id: any) => {
+                if (!id) return null;
+                if (typeof id === 'string') return id;
+                return String(id._id || id);
+            };
+
+            const targetCompanyId = String(company_id);
+            
+            // Buscar vehículo que coincida con la compañía
+            let vehicle = vehicles.find((v: any) => {
+                // 1. Vehículos propios: owner_id.company_id coincide
+                const ownerCompanyId = normalizeId(v.owner_id?.company_id);
+                if (ownerCompanyId === targetCompanyId) {
+                    return true;
+                }
+
+                // 2. Vehículos de usuarios: verificar si el usuario tiene company_id que coincide
+                if (v.owner_id?.type === "User" && v.owner_id?.user_id) {
+                    const userId = v.owner_id.user_id;
+                    if (userId.company_id) {
+                        const userCompanyId = normalizeId(userId.company_id);
+                        if (userCompanyId === targetCompanyId) {
+                            return true;
+                        }
+                    }
+                }
+
+                // 3. Vehículos afiliados: verificar que el conductor pertenezca a la compañía
+                if (v.flota === "afiliado") {
+                    if (v.driver_id) {
+                        const driverCompanyId = normalizeId(v.driver_id?.company_id);
+                        if (driverCompanyId === targetCompanyId) {
+                            return true;
+                        }
+                    }
+                    // También verificar possible_drivers
+                    if (v.possible_drivers && Array.isArray(v.possible_drivers) && v.possible_drivers.length > 0) {
+                        const hasDriverWithCompany = v.possible_drivers.some((driver: any) => {
+                            const driverCompanyId = normalizeId(driver?.company_id);
+                            return driverCompanyId === targetCompanyId;
+                        });
+                        if (hasDriverWithCompany) {
+                            return true;
+                        }
+                    }
+                }
+
+                // 4. Vehículos externos: si el conductor pertenece a la compañía
+                if (v.flota === "externo") {
+                    const driverCompanyId = normalizeId(v.driver_id?.company_id);
+                    if (driverCompanyId === targetCompanyId) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+
+            if (!vehicle) {
+                throw new ResponseError(404, "No se encontró vehículo con esa placa para esta compañía");
+            }
+
+            return formatVehicleResponseForPlaca(vehicle);
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo obtener el vehículo por placa");
