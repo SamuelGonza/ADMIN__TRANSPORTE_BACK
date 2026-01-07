@@ -20,6 +20,7 @@ export class SolicitudesController {
                 message: "Solicitud creada exitosamente"
             });
         } catch (error) {
+            console.log(error);
             if(error instanceof ResponseError){
                 res.status(error.statusCode).json({
                     ok: false,
@@ -971,6 +972,85 @@ export class SolicitudesController {
             res.status(500).json({
                 ok: false,
                 message: "Error al marcar solicitud como lista para facturación"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Enviar prefactura al cliente
+     */
+    public async send_prefactura_to_client(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { notas } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            const response = await this.solicitudesService.send_prefactura_to_client({
+                solicitud_id: id,
+                user_id: user_id as string,
+                notas
+            });
+
+            res.status(200).json({
+                success: true,
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al enviar prefactura al cliente"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Cambiar estado de prefactura
+     */
+    public async change_prefactura_status(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { status, notas } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            if (!status || (status !== "aceptada" && status !== "rechazada")) {
+                res.status(400).json({
+                    ok: false,
+                    message: "El estado debe ser 'aceptada' o 'rechazada'"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.change_prefactura_status({
+                solicitud_id: id,
+                user_id: user_id as string,
+                status: status as "aceptada" | "rechazada",
+                notas
+            });
+
+            res.status(200).json({
+                success: true,
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al cambiar estado de prefactura"
             });
             return;
         }

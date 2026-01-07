@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { LocationsController } from "@/controllers/locations.controller";
-import { CoordinadorAuth } from "@/auth/coordinador.auth";
+import { LocationsReadAuth } from "@/auth/locations-read.auth";
 
 const router: Router = Router();
 const locationsController = new LocationsController();
@@ -14,6 +14,7 @@ const locationsController = new LocationsController();
  *     summary: Listar/buscar lugares (autocompletado)
  *     description: |
  *       Devuelve lugares ordenados por uso. Requiere `company_id` (del token o query).
+ *       Accesible para: coordinadores (operador/comercial), admin, superadmon y clientes.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -41,7 +42,7 @@ const locationsController = new LocationsController();
  *                     $ref: '#/components/schemas/Location'
  *               required: [message, data]
  */
-router.get("/", CoordinadorAuth, locationsController.list_locations.bind(locationsController));
+router.get("/", LocationsReadAuth, locationsController.list_locations.bind(locationsController));
 
 export default router;
 

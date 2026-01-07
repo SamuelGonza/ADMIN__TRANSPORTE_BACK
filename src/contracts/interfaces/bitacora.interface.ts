@@ -107,6 +107,17 @@ export interface BitacoraSolicitud extends Document {
         rechazada_por?: ObjectId;
         rechazada_fecha?: Date;
         notas?: string;
+        // Nuevos campos para envío al cliente
+        estado?: "pendiente" | "aceptada" | "rechazada"; // Estado de envío al cliente
+        enviada_al_cliente?: boolean; // Si ha sido enviada al cliente
+        fecha_envio_cliente?: Date; // Fecha del último envío al cliente
+        enviada_por?: ObjectId; // Usuario que envió la prefactura
+        historial_envios?: Array<{
+            fecha: Date;
+            estado: "aceptada" | "rechazada";
+            enviado_por: ObjectId;
+            notas?: string;
+        }>;
     };
 
     // Metadata

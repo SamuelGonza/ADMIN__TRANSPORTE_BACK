@@ -5,17 +5,28 @@ import { TokenSessionPayload } from "@/utils/generate";
 import { NextFunction, Request, Response } from "express";
 import jwt from 'jsonwebtoken'
 
-export const ClienteAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Middleware para consultar locations:
+ * - superadmon: puede ver todos los locations
+ * - admin: solo locations de su company_id
+ * - coordinador_operador: solo locations de su company_id
+ * - coordinador_comercial: solo locations de su company_id
+ * - cliente: solo locations de su company_id
+ */
+export const LocationsReadAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const token_session = req.cookies._session_token_;
 
-        if(!token_session) throw new ResponseError(401, "No se proporciono autorizacion")
+        if(!token_session) throw new ResponseError(401, "No se proporcionó autorización")
 
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
 
-        if(!decoded) if (!decoded) throw new ResponseError(401, "Token inválido");
+        if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        if(decoded.role != "superadmon" && decoded.role !== "admin" && decoded.role !== "cliente") throw new ResponseError(401, "No tienes permisos");
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "cliente"];
+        if(!allowedRoles.includes(decoded.role)) {
+            throw new ResponseError(401, "No tienes permisos para consultar locations");
+        }
 
         (req as AuthRequest).user = {
             _id: decoded._id,

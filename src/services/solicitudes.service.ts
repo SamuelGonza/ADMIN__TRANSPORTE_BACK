@@ -73,6 +73,64 @@ export class SolicitudesService {
         return { origen_location_id: (o as any)?._id, destino_location_id: (d as any)?._id };
     }
 
+    /**
+     * Genera el siguiente consecutivo HE para una compañía
+     * Busca el HE más alto y lo incrementa en 1
+     */
+    private async generate_next_he(company_id: string): Promise<string> {
+        try {
+            // Normalizar company_id a ObjectId
+            const company_id_obj = new mongoose.Types.ObjectId(company_id);
+
+            // Buscar todas las solicitudes de la compañía
+            // Necesitamos obtener el company_id desde las bitácoras o desde el cliente
+            // Primero, obtener todas las bitácoras de la compañía
+            const bitacoras = await bitacoraModel.find({ company_id: company_id_obj }).select('_id').lean();
+            const bitacora_ids = bitacoras.map(b => b._id);
+
+            if (bitacora_ids.length === 0) {
+                // Si no hay bitácoras, empezar desde 1
+                return "1";
+            }
+
+            // Buscar la solicitud con el HE más alto (numérico)
+            // El HE puede ser un string numérico, así que necesitamos convertirlo a número para comparar
+            const solicitudes = await solicitudModel
+                .find({ bitacora_id: { $in: bitacora_ids } })
+                .select('he')
+                .lean();
+
+            if (!solicitudes || solicitudes.length === 0) {
+                // Si no hay solicitudes, empezar desde 1
+                return "1";
+            }
+
+            // Extraer números del HE y encontrar el máximo
+            let maxHe = 0;
+            for (const solicitud of solicitudes) {
+                const he = (solicitud as any).he;
+                if (he && typeof he === 'string') {
+                    // Intentar extraer el número del string
+                    const heNumber = parseInt(he, 10);
+                    if (!isNaN(heNumber) && heNumber > maxHe) {
+                        maxHe = heNumber;
+                    }
+                } else if (typeof he === 'number') {
+                    if (he > maxHe) {
+                        maxHe = he;
+                    }
+                }
+            }
+
+            // Incrementar y devolver como string
+            return String(maxHe + 1);
+        } catch (error) {
+            console.error("Error al generar HE consecutivo:", error);
+            // En caso de error, devolver un timestamp como fallback
+            return String(Date.now());
+        }
+    }
+
     private resolveTemplatePath(fileName: string) {
         const cwd = process.cwd();
         const distPath = path.join(cwd, "dist", "email", "templates", fileName);
@@ -237,7 +295,7 @@ export class SolicitudesService {
     }: {
         client_id: string,
         payload: {
-            bitacora_id?: string, // Opcional: si no se proporciona, se busca automáticamente
+            // bitacora_id REMOVIDO - se asigna automáticamente según mes/año actual
             fecha: Date,
             hora_inicio: string,
             origen: string,
@@ -251,45 +309,64 @@ export class SolicitudesService {
         }
     }) {
         try {
+            // Validar fecha y hora
+            const fechaServicio = dayjs(payload.fecha);
+            const fechaActual = dayjs().startOf('day');
+            
+            // Validar que la fecha no sea menor al día actual
+            if (fechaServicio.isBefore(fechaActual, 'day')) {
+                throw new ResponseError(400, "La fecha del servicio no puede ser menor al día actual");
+            }
+
+            // Si la fecha es hoy, validar que la hora de inicio no sea menor a la hora actual
+            if (fechaServicio.isSame(fechaActual, 'day')) {
+                const horaActual = dayjs();
+                const [horas, minutos] = payload.hora_inicio.split(':').map(Number);
+                const horaInicioServicio = dayjs().hour(horas).minute(minutos || 0).second(0).millisecond(0);
+                
+                if (horaInicioServicio.isBefore(horaActual)) {
+                    throw new ResponseError(400, "La hora de inicio no puede ser menor a la hora actual");
+                }
+            }
+
             // Obtener información del cliente
             const client = await SolicitudesService.ClientService.get_client_by_id({ id: client_id });
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
 
-            // Obtener o crear bitácora automáticamente basada en la fecha
-            let bitacora_id: mongoose.Types.ObjectId;
-            if (payload.bitacora_id) {
-                // Si se proporciona bitacora_id, validar que existe
-                if (!mongoose.Types.ObjectId.isValid(payload.bitacora_id)) {
-                    throw new ResponseError(400, "ID de bitácora inválido");
-                }
-                const bitacora = await bitacoraModel.findById(payload.bitacora_id);
-                if (!bitacora) {
-                    throw new ResponseError(404, "Bitácora no encontrada");
-                }
-                bitacora_id = bitacora._id;
-            } else {
-                // Buscar o crear bitácora automáticamente
-                const client_company_id = typeof client.company_id === 'object' 
-                    ? (client.company_id as any)._id || client.company_id
-                    : client.company_id;
-                bitacora_id = await this.get_or_create_bitacora({
-                    company_id: String(client_company_id),
-                    fecha: payload.fecha
-                });
-            }
+            // Obtener o crear bitácora automáticamente basada en el MES/AÑO ACTUAL (no la fecha del servicio)
+            const client_company_id = typeof client.company_id === 'object' 
+                ? (client.company_id as any)._id || client.company_id
+                : client.company_id;
+            
+            // Normalizar a string para uso consistente
+            const client_company_id_str = String(client_company_id);
+            
+            // Usar fecha actual para determinar mes/año de la bitácora
+            const fechaActualParaBitacora = dayjs().toDate();
+            const bitacora_id = await this.get_or_create_bitacora({
+                company_id: client_company_id_str,
+                fecha: fechaActualParaBitacora
+            });
 
             const loc = await this.resolve_locations({
-                company_id: String(client.company_id),
+                company_id: client_company_id_str,
                 origen: payload.origen,
                 destino: payload.destino
             });
+
+            // Normalizar fecha para evitar problemas de timezone
+            // Asegurar que la fecha se guarde como fecha local sin hora
+            const fechaNormalizada = dayjs(payload.fecha).startOf('day').toDate();
+
+            // Generar consecutivo HE automáticamente
+            const next_he = await this.generate_next_he(client_company_id_str);
 
             // Crear la solicitud con status pending
             const new_solicitud = await solicitudModel.create({
                 bitacora_id: bitacora_id,
 
                 // Datos proporcionados por el cliente
-                fecha: payload.fecha,
+                fecha: fechaNormalizada,
                 hora_inicio: payload.hora_inicio,
                 origen: payload.origen,
                 destino: payload.destino,
@@ -306,7 +383,7 @@ export class SolicitudesService {
                 contacto_phone: payload.contacto_phone || ((client.contacts && client.contacts.length > 0) ? client.contacts[0].phone : client.phone || ""),
 
                 // Campos vacíos/default que se llenarán después
-                he: "",
+                he: next_he, // Generado automáticamente
                 empresa: "national", // default
                 hora_final: "",
                 total_horas: 0,
@@ -333,12 +410,14 @@ export class SolicitudesService {
 
             await new_solicitud.save();
 
-            // Enviar notificación al coordinador de nueva solicitud
+            // Enviar notificación a TODOS los coordinadores comerciales y operadores
             try {
-                // Obtener coordinadores de la empresa del cliente
+                // Obtener SOLO coordinadores comerciales y operadores de la empresa del cliente
+                // Usar client_company_id normalizado y convertirlo a ObjectId para la consulta
+                const company_id_obj = new mongoose.Types.ObjectId(client_company_id_str);
                 const coordinators = await userModel.find({
-                    company_id: client.company_id,
-                    role: { $in: ['coordinador_operador', 'coordinador_comercial', 'admin', 'superadmon'] },
+                    company_id: company_id_obj,
+                    role: { $in: ['coordinador_operador', 'coordinador_comercial'] },
                     is_active: true,
                     is_delete: false
                 }).select('full_name email').lean();
@@ -363,6 +442,7 @@ export class SolicitudesService {
                 console.log("Error al enviar email a coordinadores:", emailError);
             }
         } catch (error) {
+            console.log(error);
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo crear la solicitud");
         }
@@ -383,7 +463,7 @@ export class SolicitudesService {
             cliente_id: string,
 
             // Información básica
-            he: string,
+            // he REMOVIDO - se genera automáticamente como consecutivo por compañía
             empresa: "travel" | "national",
             fecha: Date,
             hora_inicio: string,
@@ -395,13 +475,24 @@ export class SolicitudesService {
             estimated_hours?: number,
 
             // Vehículo y conductor
-            placa: string, // Se usa placa en lugar de vehiculo_id
-            conductor_id?: string, // Opcional: si no se proporciona, se usa el conductor principal del vehículo
+            placa: string, // Se usa placa en lugar de vehiculo_id (para compatibilidad hacia atrás)
+            conductor_id?: string, // Opcional: si no se proporciona, se usa el conductor principal del vehículo (para compatibilidad)
+
+            // NUEVO: Array de vehículos asignados (multi-vehículo)
+            vehicle_assignments?: Array<{
+                vehiculo_id: string;
+                placa: string;
+                conductor_id: string;
+                assigned_passengers: number;
+                contract_id?: string;
+                contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
+                contract_charge_amount?: number;
+            }>;
 
             // Datos financieros (opcionales - el comercial los establecerá después)
             // valor_cancelado, valor_a_facturar, utilidad, porcentaje_utilidad removidos
 
-            // Contrato (opcional)
+            // Contrato (opcional) - se aplica a todos los vehículos si vehicle_assignments no especifica contrato individual
             contract_id?: string,
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract",
             contract_charge_amount?: number,
@@ -409,25 +500,92 @@ export class SolicitudesService {
         }
     }) {
         try {
+            // Validar fecha y hora
+            const fechaServicio = dayjs(payload.fecha);
+            const fechaActual = dayjs().startOf('day');
+            
+            // Validar que la fecha no sea menor al día actual
+            if (fechaServicio.isBefore(fechaActual, 'day')) {
+                throw new ResponseError(400, "La fecha del servicio no puede ser menor al día actual");
+            }
+
+            // Si la fecha es hoy, validar que la hora de inicio no sea menor a la hora actual
+            if (fechaServicio.isSame(fechaActual, 'day')) {
+                const horaActual = dayjs();
+                const [horas, minutos] = payload.hora_inicio.split(':').map(Number);
+                const horaInicioServicio = dayjs().hour(horas).minute(minutos || 0).second(0).millisecond(0);
+                
+                if (horaInicioServicio.isBefore(horaActual)) {
+                    throw new ResponseError(400, "La hora de inicio no puede ser menor a la hora actual");
+                }
+            }
+
             // Obtener información del cliente
             const client = await SolicitudesService.ClientService.get_client_by_id({ id: payload.cliente_id });
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
 
+            // Extraer y normalizar company_id del cliente
+            const client_company_id = typeof client.company_id === 'object' 
+                ? (client.company_id as any)._id || client.company_id
+                : client.company_id;
+            const client_company_id_str = String(client_company_id);
+
+            // Generar consecutivo HE automáticamente
+            const next_he = await this.generate_next_he(client_company_id_str);
+
+            // Normalizar fecha para evitar problemas de timezone
+            const fechaNormalizada = dayjs(payload.fecha).startOf('day').toDate();
+
             const loc = await this.resolve_locations({
-                company_id: String(client.company_id),
+                company_id: client_company_id_str,
                 origen: payload.origen,
                 destino: payload.destino
             });
 
-            // Si hay contrato, traer cobro/tarifas para estimación
+            // Validar y procesar contrato si está presente
+            let contract_validated: any = null;
             let pricing_rate: number | undefined = undefined;
             let pricing_mode: any = payload.pricing_mode;
+            
             if (payload.contract_id) {
-                const contrato = await contractModel.findById(payload.contract_id).select("cobro company_id").lean();
-                if (contrato?.company_id && String(contrato.company_id) !== String(client.company_id)) {
+                // Validar que el contrato existe y pertenece al cliente
+                contract_validated = await contractModel.findById(payload.contract_id).lean();
+                if (!contract_validated) {
+                    throw new ResponseError(404, "Contrato no encontrado");
+                }
+                
+                // Validar que el contrato pertenece al cliente
+                if (String(contract_validated.client_id) !== String(payload.cliente_id)) {
+                    throw new ResponseError(400, "El contrato no pertenece al cliente especificado");
+                }
+                
+                // Validar que el contrato pertenece a la empresa
+                const contract_company_id = typeof contract_validated.company_id === 'object' 
+                    ? (contract_validated.company_id as any)._id || contract_validated.company_id
+                    : contract_validated.company_id;
+                if (String(contract_company_id) !== String(client_company_id_str)) {
                     throw new ResponseError(401, "El contrato no pertenece a la empresa del cliente");
                 }
-                const cobro: any = (contrato as any)?.cobro || {};
+                
+                // Validar que el contrato está activo
+                if (!contract_validated.is_active) {
+                    throw new ResponseError(400, "El contrato está inactivo");
+                }
+                
+                // Si contract_charge_mode es "within_contract", validar disponibilidad del presupuesto
+                if (payload.contract_charge_mode === "within_contract") {
+                    const contract_amount = payload.contract_charge_amount || 0;
+                    const current_consumed = contract_validated.valor_consumido || 0;
+                    const budget = contract_validated.valor_presupuesto;
+                    
+                    // Si hay presupuesto definido, validar que no se exceda
+                    if (budget != null && (current_consumed + contract_amount) > budget) {
+                        throw new ResponseError(400, `El cargo excedería el presupuesto del contrato. Presupuesto: ${budget}, Consumido: ${current_consumed}, Nuevo cargo: ${contract_amount}`);
+                    }
+                }
+                
+                // Obtener tarifas para estimación
+                const cobro: any = (contract_validated as any)?.cobro || {};
                 if (!pricing_mode) pricing_mode = cobro.modo_default;
                 if (pricing_mode && cobro && cobro[pricing_mode] != null) pricing_rate = Number(cobro[pricing_mode]);
             }
@@ -438,44 +596,82 @@ export class SolicitudesService {
                 estimated_km: payload.estimated_km
             });
 
-            // Buscar vehículo por placa - automáticamente trae conductor y propietario
-            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
-                placa: payload.placa,
-                company_id: String(client.company_id)
-            });
+            // Procesar vehicle_assignments si está presente, sino usar comportamiento tradicional
+            let vehicle_assignments_processed: any[] = [];
+            let primary_vehicle: any = null;
+            let primary_conductor: any = null;
+            let primary_vehicle_data: any = null;
 
-            // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
-            const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
-            const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
-                ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
-                : [];
-            const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
+            if (payload.vehicle_assignments && payload.vehicle_assignments.length > 0) {
+                // Procesar múltiples vehículos
+                vehicle_assignments_processed = await this.process_vehicle_assignments({
+                    vehicle_assignments: payload.vehicle_assignments,
+                    company_id: client_company_id_str,
+                    requested_passengers: payload.requested_passengers,
+                    default_contract_id: payload.contract_id,
+                    default_contract_charge_mode: payload.contract_charge_mode,
+                    default_contract_charge_amount: payload.contract_charge_amount
+                });
 
-            const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
-            if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
-            if (!allowed_driver_ids.has(target_driver_id)) {
-                throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
+                // El primer vehículo es el principal (para compatibilidad)
+                if (vehicle_assignments_processed.length > 0) {
+                    const first = vehicle_assignments_processed[0];
+                    primary_vehicle = await vehicleModel.findById(first.vehiculo_id).lean();
+                    primary_conductor = await SolicitudesService.UserService.get_user_by_id({ id: String(first.conductor_id) });
+                    primary_vehicle_data = {
+                        vehicle: primary_vehicle,
+                        conductor: primary_conductor
+                    };
+                }
+            } else {
+                // Comportamiento tradicional: un solo vehículo
+                const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                    placa: payload.placa,
+                    company_id: client_company_id_str
+                });
+
+                // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
+                const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
+                const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
+                    ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
+                    : [];
+                const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
+
+                const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
+                if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
+                if (!allowed_driver_ids.has(target_driver_id)) {
+                    throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
+                }
+
+                const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
+                if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+
+                primary_vehicle = vehicleData.vehicle;
+                primary_conductor = conductor;
+                primary_vehicle_data = vehicleData;
             }
 
-            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
-            if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
-
-            const vehicle = vehicleData.vehicle;
+            if (!primary_vehicle || !primary_conductor) {
+                throw new ResponseError(400, "No se pudo determinar el vehículo o conductor principal");
+            }
 
             // Crear la solicitud ya aceptada
             const new_solicitud = await solicitudModel.create({
                 bitacora_id: payload.bitacora_id,
 
                 // Información básica del servicio
-                he: payload.he,
+                he: next_he, // Generado automáticamente
                 empresa: payload.empresa,
-                fecha: payload.fecha,
+                fecha: fechaNormalizada,
                 hora_inicio: payload.hora_inicio,
                 origen: payload.origen,
                 destino: payload.destino,
                 origen_location_id: loc.origen_location_id,
                 destino_location_id: loc.destino_location_id,
-                n_pasajeros: payload.n_pasajeros,
+                // Si hay vehicle_assignments, n_pasajeros debe ser la suma de assigned_passengers
+                n_pasajeros: vehicle_assignments_processed.length > 0
+                    ? vehicle_assignments_processed.reduce((sum, va) => sum + va.assigned_passengers, 0)
+                    : payload.n_pasajeros,
                 requested_passengers: payload.requested_passengers,
 
                 estimated_km: payload.estimated_km,
@@ -494,12 +690,18 @@ export class SolicitudesService {
                 novedades: "",
 
                 // Vehículo y conductor (auto-rellenados desde los modelos)
-                vehiculo_id: (vehicle as any)._id,
-                placa: vehicle.placa,
-                tipo_vehiculo: vehicle.type,
-                flota: vehicle.flota,
-                conductor: target_driver_id,
-                conductor_phone: conductor.contact?.phone || "",
+                // Si hay vehicle_assignments, estos campos se usan para compatibilidad (primer vehículo)
+                vehiculo_id: (primary_vehicle as any)._id,
+                placa: primary_vehicle.placa,
+                tipo_vehiculo: primary_vehicle.type,
+                flota: primary_vehicle.flota,
+                conductor: (primary_conductor as any)._id,
+                conductor_phone: (primary_conductor as any).contact?.phone || "",
+
+                // Vehicle assignments (multi-vehículo)
+                vehicle_assignments: vehicle_assignments_processed.length > 0 
+                    ? vehicle_assignments_processed 
+                    : undefined,
 
                 // Datos financieros (inicializados en 0, el comercial los establecerá después)
                 valor_cancelado: 0,
@@ -507,7 +709,7 @@ export class SolicitudesService {
                 utilidad: 0,
                 porcentaje_utilidad: 0,
 
-                // Contrato (si aplica)
+                // Contrato (si aplica) - solo si no hay vehicle_assignments o si todos usan el mismo contrato
                 contract_id: payload.contract_id || undefined,
                 contract_charge_mode: payload.contract_charge_mode || "no_contract",
                 contract_charge_amount: payload.contract_charge_amount || 0,
@@ -526,63 +728,117 @@ export class SolicitudesService {
 
             await new_solicitud.save();
 
-            // Crear sección de pagos automáticamente con la información del vehículo asignado
+            // Crear sección de pagos automáticamente
             const paymentSectionService = new PaymentSectionService();
+            // Construir payment_assignments con información completa de cada vehículo
+            const payment_assignments = vehicle_assignments_processed.length > 0
+                ? await Promise.all(vehicle_assignments_processed.map(async (va) => {
+                    const v = await vehicleModel.findById(va.vehiculo_id).select("flota").lean();
+                    return {
+                        vehiculo_id: String(va.vehiculo_id),
+                        placa: va.placa,
+                        conductor_id: String(va.conductor_id),
+                        flota: (v as any)?.flota || primary_vehicle.flota
+                    };
+                }))
+                : [{
+                    vehiculo_id: String((primary_vehicle as any)._id),
+                    placa: primary_vehicle.placa,
+                    conductor_id: String((primary_conductor as any)._id),
+                    flota: primary_vehicle.flota
+                }];
+
             await paymentSectionService.create_or_update_payment_section({
                 solicitud_id: new_solicitud._id.toString(),
                 company_id: String(client.company_id),
-                vehicle_assignments: [{
-                    vehiculo_id: (vehicle as any)._id.toString(),
-                    placa: vehicle.placa,
-                    conductor_id: target_driver_id,
-                    flota: vehicle.flota
-                }],
+                vehicle_assignments: payment_assignments,
                 created_by: coordinator_id
             });
 
-            // Descontar presupuesto si aplica (contrato fijo/ocasional)
-            // Nota: El cargo al contrato se hará después cuando el comercial establezca valor_a_facturar
-            if (payload.contract_charge_mode === "within_contract") {
-                if (!payload.contract_id) throw new ResponseError(400, "contract_id es requerido cuando contract_charge_mode = within_contract");
+            // Procesar contratos: cargar al contrato si contract_charge_mode === "within_contract"
+            // Si hay vehicle_assignments, procesar cargos individuales por vehículo
+            if (vehicle_assignments_processed.length > 0) {
+                // Procesar cargos por cada vehículo si tienen contract_charge_mode = "within_contract"
+                for (const assignment of vehicle_assignments_processed) {
+                    if (assignment.contract_charge_mode === "within_contract") {
+                        if (!assignment.contract_id) {
+                            throw new ResponseError(400, `contract_id es requerido para vehículo ${assignment.placa} cuando contract_charge_mode = within_contract`);
+                        }
+                        
+                        // Validar contrato del vehículo
+                        const vehicle_contract = await contractModel.findById(assignment.contract_id).lean();
+                        if (!vehicle_contract) {
+                            throw new ResponseError(404, `Contrato ${assignment.contract_id} no encontrado para vehículo ${assignment.placa}`);
+                        }
+                        if (String(vehicle_contract.client_id) !== String(payload.cliente_id)) {
+                            throw new ResponseError(400, `El contrato ${assignment.contract_id} no pertenece al cliente para vehículo ${assignment.placa}`);
+                        }
+                        if (!vehicle_contract.is_active) {
+                            throw new ResponseError(400, `El contrato ${assignment.contract_id} está inactivo para vehículo ${assignment.placa}`);
+                        }
+                        
+                        // Validar disponibilidad del presupuesto
+                        const amount = Number(assignment.contract_charge_amount || 0);
+                        const current_consumed = vehicle_contract.valor_consumido || 0;
+                        const budget = vehicle_contract.valor_presupuesto;
+                        if (budget != null && (current_consumed + amount) > budget) {
+                            throw new ResponseError(400, `El cargo excedería el presupuesto del contrato para vehículo ${assignment.placa}. Presupuesto: ${budget}, Consumido: ${current_consumed}, Nuevo cargo: ${amount}`);
+                        }
+                        
+                        // Cargar al contrato (incluso si amount es 0, para registrar el consumo del servicio)
+                        if (amount > 0) {
+                            await SolicitudesService.ContractsService.charge_contract({
+                                contract_id: String(assignment.contract_id),
+                                company_id: client_company_id_str,
+                                amount,
+                                solicitud_id: new_solicitud._id.toString(),
+                                created_by: coordinator_id,
+                                notes: `Cargo automático por solicitud ${new_solicitud.he || new_solicitud._id.toString()} - Vehículo ${assignment.placa}`
+                            });
+                        }
+                    }
+                }
+            } else if (payload.contract_id && payload.contract_charge_mode === "within_contract") {
+                // Comportamiento tradicional: un solo vehículo con contrato
+                // El contrato ya fue validado arriba en contract_validated
                 
-                // Solo cargar al contrato si se proporciona contract_charge_amount explícitamente
-                // Si no, se cargará después cuando el comercial establezca valor_a_facturar
-                if (payload.contract_charge_amount && payload.contract_charge_amount > 0) {
-                    const amount = payload.contract_charge_amount;
-
+                const amount = payload.contract_charge_amount || 0;
+                
+                // Cargar al contrato (incluso si amount es 0, para registrar el consumo del servicio)
+                // Nota: charge_contract requiere amount > 0, así que solo cargamos si hay monto
+                // Si no hay monto, el consumo se registrará cuando el comercial establezca valor_a_facturar
+                if (amount > 0) {
                     await SolicitudesService.ContractsService.charge_contract({
                         contract_id: payload.contract_id,
-                        company_id: String(client.company_id),
+                        company_id: client_company_id_str,
                         amount,
                         solicitud_id: new_solicitud._id.toString(),
                         created_by: coordinator_id,
                         notes: `Cargo automático por solicitud ${new_solicitud.he || new_solicitud._id.toString()}`
                     });
-
-                    // Asegurar consistencia en la solicitud
-                    new_solicitud.contract_charge_amount = amount as any;
                 }
-
+                
+                // Asegurar que la información del contrato esté guardada en la solicitud
                 new_solicitud.contract_id = payload.contract_id as any;
                 new_solicitud.contract_charge_mode = "within_contract" as any;
+                new_solicitud.contract_charge_amount = amount as any;
+                await new_solicitud.save();
+            } else if (payload.contract_id) {
+                // Si hay contract_id pero contract_charge_mode no es "within_contract", solo guardar la información
+                new_solicitud.contract_id = payload.contract_id as any;
+                new_solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
+                new_solicitud.contract_charge_amount = (payload.contract_charge_amount || 0) as any;
                 await new_solicitud.save();
             }
 
-            // Enviar notificación al cliente de que su solicitud ha sido creada y aprobada
+            // Enviar correos cuando la solicitud está completamente rellenada
             try {
-                const fecha_formatted = dayjs(payload.fecha).format('DD/MM/YYYY');
-                await send_client_solicitud_approved({
-                    client_name: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
-                    client_email: client.email,
-                    fecha: fecha_formatted,
-                    hora_inicio: payload.hora_inicio,
-                    origen: payload.origen,
-                    destino: payload.destino,
-                    vehiculo_placa: vehicle.placa,
-                    conductor_name: conductor.full_name
+                await this.send_emails_solicitud_complete({
+                    solicitud_id: new_solicitud._id.toString()
                 });
             } catch (emailError) {
-                console.log("Error al enviar email al cliente:", emailError);
+                console.log("Error al enviar correos de solicitud completa:", emailError);
+                // No lanzar error, solo loguear
             }
         } catch (error) {
             if (error instanceof ResponseError) throw error;
@@ -608,14 +864,26 @@ export class SolicitudesService {
             payload: {
             he: string,
             empresa: "travel" | "national",
-            placa: string, // Ahora se usa placa en lugar de vehiculo_id
-            conductor_id?: string, // Permite elegir conductor del listado del vehículo
+            placa: string, // Ahora se usa placa en lugar de vehiculo_id (para compatibilidad)
+            conductor_id?: string, // Permite elegir conductor del listado del vehículo (para compatibilidad)
+            
+            // NUEVO: Array de vehículos asignados (multi-vehículo)
+            vehicle_assignments?: Array<{
+                vehiculo_id: string;
+                placa: string;
+                conductor_id: string;
+                assigned_passengers: number;
+                contract_id?: string;
+                contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
+                contract_charge_amount?: number;
+            }>;
+            
             // Valores financieros removidos - el comercial los establecerá después
             requested_passengers?: number,
             estimated_km?: number,
             estimated_hours?: number,
 
-            // Contrato (opcional)
+            // Contrato (opcional) - se aplica a todos los vehículos si vehicle_assignments no especifica contrato individual
             contract_id?: string,
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract",
             contract_charge_amount?: number,
@@ -630,27 +898,113 @@ export class SolicitudesService {
                 throw new ResponseError(400, "Solo se pueden aceptar solicitudes pendientes");
             }
 
-            // Buscar vehículo por placa - automáticamente trae conductor y propietario
-            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
-                placa: payload.placa,
-                company_id 
-            });
-
-            // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
-            const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
-            const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
-                ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
-                : [];
-            const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
-
-            const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
-            if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
-            if (!allowed_driver_ids.has(target_driver_id)) {
-                throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
+            // Obtener company_id del cliente si no se proporciona
+            if (!company_id) {
+                const client = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
+                const client_company_id = typeof client.company_id === 'object' 
+                    ? (client.company_id as any)._id || client.company_id
+                    : client.company_id;
+                company_id = String(client_company_id);
             }
 
-            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
-            if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+            // Validar y procesar contrato si está presente
+            let contract_validated: any = null;
+            if (payload.contract_id) {
+                // Validar que el contrato existe y pertenece al cliente
+                contract_validated = await contractModel.findById(payload.contract_id).lean();
+                if (!contract_validated) {
+                    throw new ResponseError(404, "Contrato no encontrado");
+                }
+                
+                // Validar que el contrato pertenece al cliente
+                if (String(contract_validated.client_id) !== String(solicitud.cliente)) {
+                    throw new ResponseError(400, "El contrato no pertenece al cliente de la solicitud");
+                }
+                
+                // Validar que el contrato pertenece a la empresa
+                const contract_company_id = typeof contract_validated.company_id === 'object' 
+                    ? (contract_validated.company_id as any)._id || contract_validated.company_id
+                    : contract_validated.company_id;
+                if (String(contract_company_id) !== String(company_id)) {
+                    throw new ResponseError(401, "El contrato no pertenece a la empresa");
+                }
+                
+                // Validar que el contrato está activo
+                if (!contract_validated.is_active) {
+                    throw new ResponseError(400, "El contrato está inactivo");
+                }
+                
+                // Si contract_charge_mode es "within_contract", validar disponibilidad del presupuesto
+                if (payload.contract_charge_mode === "within_contract") {
+                    const contract_amount = payload.contract_charge_amount || 0;
+                    const current_consumed = contract_validated.valor_consumido || 0;
+                    const budget = contract_validated.valor_presupuesto;
+                    
+                    // Si hay presupuesto definido, validar que no se exceda
+                    if (budget != null && (current_consumed + contract_amount) > budget) {
+                        throw new ResponseError(400, `El cargo excedería el presupuesto del contrato. Presupuesto: ${budget}, Consumido: ${current_consumed}, Nuevo cargo: ${contract_amount}`);
+                    }
+                }
+            }
+
+            // Procesar vehicle_assignments si está presente, sino usar comportamiento tradicional
+            let vehicle_assignments_processed: any[] = [];
+            let primary_vehicle: any = null;
+            let primary_conductor: any = null;
+            let primary_vehicle_data: any = null;
+
+            if (payload.vehicle_assignments && payload.vehicle_assignments.length > 0) {
+                // Procesar múltiples vehículos
+                vehicle_assignments_processed = await this.process_vehicle_assignments({
+                    vehicle_assignments: payload.vehicle_assignments,
+                    company_id: company_id!,
+                    requested_passengers: payload.requested_passengers,
+                    default_contract_id: payload.contract_id,
+                    default_contract_charge_mode: payload.contract_charge_mode,
+                    default_contract_charge_amount: payload.contract_charge_amount
+                });
+
+                // El primer vehículo es el principal (para compatibilidad)
+                if (vehicle_assignments_processed.length > 0) {
+                    const first = vehicle_assignments_processed[0];
+                    primary_vehicle = await vehicleModel.findById(first.vehiculo_id).lean();
+                    primary_conductor = await SolicitudesService.UserService.get_user_by_id({ id: String(first.conductor_id) });
+                    primary_vehicle_data = {
+                        vehicle: primary_vehicle,
+                        conductor: primary_conductor
+                    };
+                }
+            } else {
+                // Comportamiento tradicional: un solo vehículo
+                const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                    placa: payload.placa,
+                    company_id 
+                });
+
+                // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
+                const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
+                const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
+                    ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
+                    : [];
+                const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
+
+                const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
+                if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
+                if (!allowed_driver_ids.has(target_driver_id)) {
+                    throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
+                }
+
+                const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
+                if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+
+                primary_vehicle = vehicleData.vehicle;
+                primary_conductor = conductor;
+                primary_vehicle_data = vehicleData;
+            }
+
+            if (!primary_vehicle || !primary_conductor) {
+                throw new ResponseError(400, "No se pudo determinar el vehículo o conductor principal");
+            }
 
             // Actualizar la solicitud
             solicitud.status = "accepted";
@@ -673,30 +1027,39 @@ export class SolicitudesService {
                 (solicitud as any).destino_location_id = loc.destino_location_id;
             }
 
-            // Asignar vehículo (automático desde la placa)
-            solicitud.vehiculo_id = vehicleData.vehicle._id as any;
-            solicitud.placa = vehicleData.vehicle.placa;
-            solicitud.tipo_vehiculo = vehicleData.vehicle.type;
-            solicitud.flota = vehicleData.vehicle.flota;
+            // Asignar vehículo (automático desde la placa o primer vehículo de vehicle_assignments)
+            solicitud.vehiculo_id = (primary_vehicle as any)._id as any;
+            solicitud.placa = primary_vehicle.placa;
+            solicitud.tipo_vehiculo = primary_vehicle.type;
+            solicitud.flota = primary_vehicle.flota;
 
             // Asignar conductor (seleccionado o automático desde el vehículo)
-            solicitud.conductor = target_driver_id as any;
-            solicitud.conductor_phone = (conductor as any).contact?.phone || "";
+            solicitud.conductor = (primary_conductor as any)._id as any;
+            solicitud.conductor_phone = (primary_conductor as any).contact?.phone || "";
+
+            // Vehicle assignments (multi-vehículo)
+            if (vehicle_assignments_processed.length > 0) {
+                (solicitud as any).vehicle_assignments = vehicle_assignments_processed;
+                // Actualizar n_pasajeros con la suma de assigned_passengers
+                const totalPassengers = vehicle_assignments_processed.reduce((sum, va) => sum + va.assigned_passengers, 0);
+                solicitud.n_pasajeros = totalPassengers;
+            }
 
             // Datos financieros NO se asignan aquí - el comercial los establecerá después
             // Se mantienen en 0 hasta que el comercial los defina
 
-            // Contrato
-            solicitud.contract_id = payload.contract_id as any;
-            solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
-            solicitud.contract_charge_amount = payload.contract_charge_amount || 0;
+            // Contrato - guardar información si está presente
+            if (payload.contract_id) {
+                solicitud.contract_id = payload.contract_id as any;
+                solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
+                solicitud.contract_charge_amount = (payload.contract_charge_amount || 0) as any;
+            }
 
             // Estimar precio según contrato/tarifario
             let pricing_rate: number | undefined = undefined;
             let pricing_mode: any = payload.pricing_mode;
-            if (payload.contract_id) {
-                const contrato = await contractModel.findById(payload.contract_id).select("cobro company_id").lean();
-                const cobro: any = (contrato as any)?.cobro || {};
+            if (contract_validated) {
+                const cobro: any = (contract_validated as any)?.cobro || {};
                 if (!pricing_mode) pricing_mode = cobro.modo_default;
                 if (pricing_mode && cobro && cobro[pricing_mode] != null) pricing_rate = Number(cobro[pricing_mode]);
             }
@@ -724,51 +1087,125 @@ export class SolicitudesService {
 
             // Crear o actualizar sección de pagos automáticamente
             const paymentSectionService = new PaymentSectionService();
+            // Construir payment_assignments con información completa de cada vehículo
+            const payment_assignments = vehicle_assignments_processed.length > 0
+                ? await Promise.all(vehicle_assignments_processed.map(async (va) => {
+                    const v = await vehicleModel.findById(va.vehiculo_id).select("flota").lean();
+                    return {
+                        vehiculo_id: String(va.vehiculo_id),
+                        placa: va.placa,
+                        conductor_id: String(va.conductor_id),
+                        flota: (v as any)?.flota || primary_vehicle.flota
+                    };
+                }))
+                : [{
+                    vehiculo_id: String((primary_vehicle as any)._id),
+                    placa: primary_vehicle.placa,
+                    conductor_id: String((primary_conductor as any)._id),
+                    flota: primary_vehicle.flota
+                }];
+
             await paymentSectionService.create_or_update_payment_section({
                 solicitud_id: solicitud._id.toString(),
-                company_id: company_id || String((await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) })).company_id),
-                vehicle_assignments: [{
-                    vehiculo_id: String(vehicleData.vehicle._id),
-                    placa: vehicleData.vehicle.placa,
-                    conductor_id: target_driver_id,
-                    flota: vehicleData.vehicle.flota
-                }],
+                company_id: company_id!,
+                vehicle_assignments: payment_assignments,
                 created_by: accepted_by
             });
 
-            // Descontar presupuesto si aplica (solo si se proporciona contract_charge_amount)
-            // Nota: El cargo al contrato se hará después cuando el comercial establezca valor_a_facturar
-            if (payload.contract_charge_mode === "within_contract") {
-                if (!payload.contract_id) throw new ResponseError(400, "contract_id es requerido cuando contract_charge_mode = within_contract");
+            // Procesar contratos: cargar al contrato si contract_charge_mode === "within_contract"
+            // Si hay vehicle_assignments, procesar cargos individuales por vehículo
+            if (vehicle_assignments_processed.length > 0) {
+                // Procesar cargos por cada vehículo si tienen contract_charge_mode = "within_contract"
+                for (const assignment of vehicle_assignments_processed) {
+                    if (assignment.contract_charge_mode === "within_contract") {
+                        if (!assignment.contract_id) {
+                            throw new ResponseError(400, `contract_id es requerido para vehículo ${assignment.placa} cuando contract_charge_mode = within_contract`);
+                        }
+                        
+                        // Validar contrato del vehículo
+                        const vehicle_contract = await contractModel.findById(assignment.contract_id).lean();
+                        if (!vehicle_contract) {
+                            throw new ResponseError(404, `Contrato ${assignment.contract_id} no encontrado para vehículo ${assignment.placa}`);
+                        }
+                        if (String(vehicle_contract.client_id) !== String(solicitud.cliente)) {
+                            throw new ResponseError(400, `El contrato ${assignment.contract_id} no pertenece al cliente para vehículo ${assignment.placa}`);
+                        }
+                        if (!vehicle_contract.is_active) {
+                            throw new ResponseError(400, `El contrato ${assignment.contract_id} está inactivo para vehículo ${assignment.placa}`);
+                        }
+                        
+                        // Validar disponibilidad del presupuesto
+                        const amount = Number(assignment.contract_charge_amount || 0);
+                        const current_consumed = vehicle_contract.valor_consumido || 0;
+                        const budget = vehicle_contract.valor_presupuesto;
+                        if (budget != null && (current_consumed + amount) > budget) {
+                            throw new ResponseError(400, `El cargo excedería el presupuesto del contrato para vehículo ${assignment.placa}. Presupuesto: ${budget}, Consumido: ${current_consumed}, Nuevo cargo: ${amount}`);
+                        }
+                        
+                        // Cargar al contrato (incluso si amount es 0, para registrar el consumo del servicio)
+                        if (amount > 0) {
+                            await SolicitudesService.ContractsService.charge_contract({
+                                contract_id: String(assignment.contract_id),
+                                company_id: company_id!,
+                                amount,
+                                solicitud_id: solicitud._id.toString(),
+                                created_by: accepted_by || undefined,
+                                notes: `Cargo automático por aceptación de solicitud ${solicitud.he || solicitud._id.toString()} - Vehículo ${assignment.placa}`
+                            });
+                        }
+                    }
+                }
+            } else if (payload.contract_id && payload.contract_charge_mode === "within_contract") {
+                // Comportamiento tradicional: un solo vehículo con contrato
+                // El contrato ya fue validado arriba en contract_validated
                 
-                // Solo cargar al contrato si se proporciona contract_charge_amount explícitamente
-                // Si no, se cargará después cuando el comercial establezca valor_a_facturar
-                if (payload.contract_charge_amount && payload.contract_charge_amount > 0) {
-                    const client_doc = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
+                const amount = payload.contract_charge_amount || 0;
+                
+                // Cargar al contrato (incluso si amount es 0, para registrar el consumo del servicio)
+                // Nota: charge_contract requiere amount > 0, así que solo cargamos si hay monto
+                // Si no hay monto, el consumo se registrará cuando el comercial establezca valor_a_facturar
+                if (amount > 0) {
                     await SolicitudesService.ContractsService.charge_contract({
                         contract_id: payload.contract_id,
-                        company_id: String(client_doc.company_id),
-                        amount: payload.contract_charge_amount,
+                        company_id: company_id!,
+                        amount,
                         solicitud_id: solicitud._id.toString(),
                         created_by: accepted_by || undefined,
                         notes: `Cargo automático por aceptación de solicitud ${solicitud.he || solicitud._id.toString()}`
                     });
-
-                    solicitud.contract_charge_amount = payload.contract_charge_amount as any;
                 }
-
+                
+                // Asegurar que la información del contrato esté guardada en la solicitud
                 solicitud.contract_id = payload.contract_id as any;
                 solicitud.contract_charge_mode = "within_contract" as any;
+                solicitud.contract_charge_amount = amount as any;
                 await solicitud.save();
+            } else if (payload.contract_id) {
+                // Si hay contract_id pero contract_charge_mode no es "within_contract", solo guardar la información
+                solicitud.contract_id = payload.contract_id as any;
+                solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
+                solicitud.contract_charge_amount = (payload.contract_charge_amount || 0) as any;
+                await solicitud.save();
+            }
+
+            // Enviar correos cuando la solicitud está completamente rellenada
+            try {
+                await this.send_emails_solicitud_complete({
+                    solicitud_id: solicitud._id.toString()
+                });
+            } catch (emailError) {
+                console.log("Error al enviar correos de solicitud completa:", emailError);
+                // No lanzar error, solo loguear
             }
 
             // Devolver solicitud con información completa del vehículo y conductor
             return {
                 message: "Solicitud aceptada exitosamente",
                 solicitud,
-                vehiculo: vehicleData.vehicle,
-                conductor,
-                propietario: vehicleData.propietario
+                vehiculo: primary_vehicle_data.vehicle,
+                conductor: primary_conductor,
+                propietario: primary_vehicle_data.propietario,
+                vehicle_assignments: vehicle_assignments_processed.length > 0 ? vehicle_assignments_processed : undefined
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
@@ -1132,6 +1569,143 @@ export class SolicitudesService {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudieron buscar vehículos disponibles");
         }
+    }
+
+    /**
+     * Helper: Procesar vehicle_assignments del payload
+     * Valida y construye el array de vehicle_assignments con toda la información necesaria
+     */
+    private async process_vehicle_assignments({
+        vehicle_assignments,
+        company_id,
+        requested_passengers,
+        default_contract_id,
+        default_contract_charge_mode,
+        default_contract_charge_amount
+    }: {
+        vehicle_assignments?: Array<{
+            vehiculo_id: string;
+            placa: string;
+            conductor_id: string;
+            assigned_passengers: number;
+            contract_id?: string;
+            contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
+            contract_charge_amount?: number;
+        }>;
+        company_id: string;
+        requested_passengers?: number;
+        default_contract_id?: string;
+        default_contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
+        default_contract_charge_amount?: number;
+    }): Promise<Array<{
+        vehiculo_id: any;
+        placa: string;
+        seats: number;
+        assigned_passengers: number;
+        conductor_id: any;
+        conductor_phone: string;
+        contract_id?: any;
+        contract_charge_mode: "within_contract" | "outside_contract" | "no_contract";
+        contract_charge_amount: number;
+        accounting: any;
+    }>> {
+        if (!vehicle_assignments || vehicle_assignments.length === 0) {
+            return [];
+        }
+
+        // Validar que la suma de assigned_passengers coincida con requested_passengers si está presente
+        const totalAssigned = vehicle_assignments.reduce((sum, a) => sum + Number(a.assigned_passengers || 0), 0);
+        if (requested_passengers && totalAssigned !== requested_passengers) {
+            throw new ResponseError(400, `La suma de assigned_passengers (${totalAssigned}) debe ser igual a requested_passengers (${requested_passengers})`);
+        }
+        
+        // Validar que todos los vehículos tengan IDs válidos
+        for (const assignment of vehicle_assignments) {
+            if (!assignment.vehiculo_id || !mongoose.Types.ObjectId.isValid(assignment.vehiculo_id)) {
+                throw new ResponseError(400, `vehiculo_id inválido: ${assignment.vehiculo_id}`);
+            }
+            if (!assignment.conductor_id || !mongoose.Types.ObjectId.isValid(assignment.conductor_id)) {
+                throw new ResponseError(400, `conductor_id inválido: ${assignment.conductor_id}`);
+            }
+            if (!assignment.assigned_passengers || assignment.assigned_passengers <= 0) {
+                throw new ResponseError(400, `assigned_passengers debe ser mayor a 0 para vehículo ${assignment.placa || assignment.vehiculo_id}`);
+            }
+        }
+
+        // Cargar todos los vehículos de una vez
+        const vehicleIds = [...new Set(vehicle_assignments.map(a => a.vehiculo_id))];
+        const vehicles = await vehicleModel
+            .find({
+                _id: { $in: vehicleIds.map(id => new mongoose.Types.ObjectId(id)) }
+            })
+            .select("_id placa seats driver_id possible_drivers type flota")
+            .populate("driver_id", "full_name contact.phone")
+            .populate("possible_drivers", "full_name contact.phone")
+            .lean();
+
+        if (vehicles.length !== vehicleIds.length) {
+            throw new ResponseError(400, "Uno o más vehículos no existen");
+        }
+
+        const vehicleMap = new Map<string, any>(vehicles.map(v => [String((v as any)._id), v]));
+
+        // Procesar cada asignación
+        const finalAssignments: any[] = [];
+        for (const assignment of vehicle_assignments) {
+            const vehicle = vehicleMap.get(String(assignment.vehiculo_id));
+            if (!vehicle) {
+                throw new ResponseError(400, `Vehículo ${assignment.vehiculo_id} no encontrado`);
+            }
+
+            // Validar capacidad
+            const seats = Number((vehicle as any).seats || 0);
+            const assigned = Number(assignment.assigned_passengers || 0);
+            if (assigned <= 0) {
+                throw new ResponseError(400, `assigned_passengers debe ser mayor a 0 para vehículo ${vehicle.placa}`);
+            }
+            if (seats > 0 && assigned > seats) {
+                throw new ResponseError(400, `assigned_passengers (${assigned}) excede la capacidad (${seats}) del vehículo ${vehicle.placa}`);
+            }
+
+            // Validar conductor
+            const mainDriverId = (vehicle as any).driver_id?._id 
+                ? String((vehicle as any).driver_id._id) 
+                : String((vehicle as any).driver_id || "");
+            const possibleIds = Array.isArray((vehicle as any).possible_drivers)
+                ? (vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
+                : [];
+            const allowedDriverIds = new Set<string>([mainDriverId, ...possibleIds].filter(Boolean));
+
+            if (!allowedDriverIds.has(String(assignment.conductor_id))) {
+                throw new ResponseError(400, `El conductor ${assignment.conductor_id} no está asociado al vehículo ${vehicle.placa}`);
+            }
+
+            // Obtener información del conductor
+            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: String(assignment.conductor_id) });
+            if (!conductor) {
+                throw new ResponseError(404, `Conductor ${assignment.conductor_id} no encontrado`);
+            }
+
+            // Construir asignación final
+            finalAssignments.push({
+                vehiculo_id: vehicle._id,
+                placa: vehicle.placa,
+                seats: seats,
+                assigned_passengers: assigned,
+                conductor_id: new mongoose.Types.ObjectId(assignment.conductor_id),
+                conductor_phone: (conductor as any).contact?.phone || "",
+                contract_id: assignment.contract_id 
+                    ? new mongoose.Types.ObjectId(assignment.contract_id)
+                    : (default_contract_id ? new mongoose.Types.ObjectId(default_contract_id) : undefined),
+                contract_charge_mode: assignment.contract_charge_mode || default_contract_charge_mode || "no_contract",
+                contract_charge_amount: assignment.contract_charge_amount || default_contract_charge_amount || 0,
+                accounting: {
+                    pagos: []
+                }
+            });
+        }
+
+        return finalAssignments;
     }
 
     /**
@@ -1793,23 +2367,47 @@ export class SolicitudesService {
                 .populate('vehiculo_id', 'placa type flota seats')
                 .populate('conductor', 'name phone email')
                 .populate('created_by', 'name email')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type flota seats')
+                .populate('vehicle_assignments.conductor_id', 'name phone email')
                 .lean();
 
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
+            const sol = solicitud as any;
+
+            // Transformar: si vehicle_assignments está vacío pero hay datos individuales, crear vehicle_assignments
+            if ((!sol.vehicle_assignments || sol.vehicle_assignments.length === 0) && sol.vehiculo_id) {
+                // Crear vehicle_assignments desde los campos individuales
+                sol.vehicle_assignments = [{
+                    vehiculo_id: sol.vehiculo_id,
+                    placa: sol.placa || (sol.vehiculo_id?.placa),
+                    seats: (sol.vehiculo_id as any)?.seats || sol.n_pasajeros || 0,
+                    assigned_passengers: sol.n_pasajeros || 0,
+                    conductor_id: sol.conductor || null,
+                    conductor_phone: sol.conductor_phone || (sol.conductor?.phone) || "",
+                    contract_id: sol.contract_id || null,
+                    contract_charge_mode: sol.contract_charge_mode || "no_contract",
+                    contract_charge_amount: sol.contract_charge_amount || 0,
+                    accounting: sol.vehicle_assignments?.[0]?.accounting || {}
+                }];
+            }
+
             // Aplicar permisos de visualización según el rol
             if (user_role === "coordinador_comercial") {
                 // Coordinador comercial: no ve costos
-                delete (solicitud as any).valor_cancelado;
-                delete (solicitud as any).doc_soporte;
-                delete (solicitud as any).fecha_cancelado;
-                delete (solicitud as any).n_egreso;
+                delete sol.valor_cancelado;
+                delete sol.doc_soporte;
+                delete sol.fecha_cancelado;
+                delete sol.n_egreso;
             } else if (user_role === "coordinador_operador") {
                 // Coordinador operador: no ve valores de venta
-                delete (solicitud as any).valor_a_facturar;
-                delete (solicitud as any).n_factura;
-                delete (solicitud as any).fecha_factura;
+                delete sol.valor_a_facturar;
+                delete sol.n_factura;
+                delete sol.fecha_factura;
             }
+
+            // Populizar IDs de prefactura
+            await this.populate_prefactura_ids(solicitud);
 
             return solicitud;
         } catch (error) {
@@ -1866,12 +2464,48 @@ export class SolicitudesService {
             const solicitudes = await solicitudModel
                 .find(query)
                 .populate('cliente', 'name email contacts phone')
-                .populate('vehiculo_id', 'placa type')
-                .populate('conductor', 'name phone')
+                .populate('vehiculo_id', 'placa type flota seats')
+                .populate('conductor', 'name phone email')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type flota seats')
+                .populate('vehicle_assignments.conductor_id', 'name phone email')
                 .sort({ created: -1 })
                 .skip(skip)
                 .limit(limit)
                 .lean();
+
+            // Transformar solicitudes: si vehicle_assignments está vacío pero hay datos individuales, crear vehicle_assignments
+            for (const solicitud of solicitudes) {
+                const sol = solicitud as any;
+                
+                // Si vehicle_assignments está vacío o no existe, pero hay datos en campos individuales
+                if ((!sol.vehicle_assignments || sol.vehicle_assignments.length === 0) && sol.vehiculo_id) {
+                    // Crear vehicle_assignments desde los campos individuales
+                    sol.vehicle_assignments = [{
+                        vehiculo_id: sol.vehiculo_id,
+                        placa: sol.placa || (sol.vehiculo_id?.placa),
+                        seats: (sol.vehiculo_id as any)?.seats || sol.n_pasajeros || 0,
+                        assigned_passengers: sol.n_pasajeros || 0,
+                        conductor_id: sol.conductor || null,
+                        conductor_phone: sol.conductor_phone || (sol.conductor?.phone) || "",
+                        contract_id: sol.contract_id || null,
+                        contract_charge_mode: sol.contract_charge_mode || "no_contract",
+                        contract_charge_amount: sol.contract_charge_amount || 0,
+                        accounting: sol.vehicle_assignments?.[0]?.accounting || {}
+                    }];
+                } else if (sol.vehicle_assignments && sol.vehicle_assignments.length > 0) {
+                    // Asegurar que los campos populados estén correctamente estructurados
+                    for (const assignment of sol.vehicle_assignments) {
+                        if (assignment.vehiculo_id && typeof assignment.vehiculo_id === 'object') {
+                            // Ya está populado, no hacer nada
+                        } else if (assignment.vehiculo_id) {
+                            // Si es solo un ID, mantenerlo (ya se populó arriba)
+                        }
+                        if (assignment.conductor_id && typeof assignment.conductor_id === 'object') {
+                            // Ya está populado, no hacer nada
+                        }
+                    }
+                }
+            }
 
             // Aplicar permisos de visualización según el rol
             if (user_role === "coordinador_comercial") {
@@ -1889,6 +2523,11 @@ export class SolicitudesService {
                     delete solicitud.n_factura;
                     delete solicitud.fecha_factura;
                 });
+            }
+
+            // Populizar IDs de prefactura para todas las solicitudes
+            for (let i = 0; i < solicitudes.length; i++) {
+                await this.populate_prefactura_ids(solicitudes[i]);
             }
 
             const total = await solicitudModel.countDocuments(query);
@@ -2100,11 +2739,14 @@ export class SolicitudesService {
     /**
      * Verificar que todos los vehículos de la solicitud tienen operacional subido
      * Retorna lista de vehículos que faltan operacional
+     * Actualiza automáticamente el accounting_status si todos los operacionales están completos
      */
     public async verify_operationals_complete({
-        solicitud_id
+        solicitud_id,
+        auto_update_status = true
     }: {
-        solicitud_id: string
+        solicitud_id: string;
+        auto_update_status?: boolean; // Si true, actualiza el estado automáticamente
     }): Promise<{
         all_complete: boolean;
         missing_operationals: Array<{
@@ -2137,25 +2779,66 @@ export class SolicitudesService {
                 throw new ResponseError(400, "La solicitud no tiene vehículos asignados");
             }
 
+            // Normalizar solicitud_id a ObjectId para la búsqueda
+            const solicitud_id_obj = new mongoose.Types.ObjectId(solicitud_id);
+
             // Verificar que cada vehículo tenga operacional vinculado a esta solicitud
             for (const vehicleId of vehicleIds) {
+                // Normalizar vehicle_id a ObjectId
+                const vehicle_id_obj = new mongoose.Types.ObjectId(vehicleId);
+                
+                // Buscar operacional vinculado a esta solicitud y vehículo
                 const operational = await vhc_operationalModel.findOne({
-                    vehicle_id: vehicleId,
-                    solicitud_id: solicitud_id
+                    vehicle_id: vehicle_id_obj,
+                    solicitud_id: solicitud_id_obj
                 });
 
                 if (!operational) {
+                    // Verificar si existe un operacional para este vehículo pero sin solicitud_id
+                    // (para ayudar a debuggear si se subió sin vincular)
+                    const operationalWithoutSolicitud = await vhc_operationalModel.findOne({
+                        vehicle_id: vehicle_id_obj,
+                        solicitud_id: { $exists: false }
+                    }).sort({ created: -1 }).limit(1);
+
                     // Obtener placa del vehículo
                     const vehicle = await vehicleModel.findById(vehicleId).select("placa").lean();
+                    const placa = (vehicle as any)?.placa || "N/A";
+                    
                     missing.push({
                         vehiculo_id: vehicleId,
-                        placa: (vehicle as any)?.placa || "N/A"
+                        placa: placa
                     });
+
+                    // Log para debuggear (opcional, puede removerse en producción)
+                    if (operationalWithoutSolicitud) {
+                        console.log(`⚠️ Operacional encontrado para vehículo ${placa} pero sin solicitud_id vinculado`);
+                    }
+                }
+            }
+
+            const allComplete = missing.length === 0;
+
+            // Actualizar estado automáticamente si todos los operacionales están completos
+            if (auto_update_status && allComplete) {
+                try {
+                    const solicitud = await solicitudModel.findById(solicitud_id);
+                    if (solicitud) {
+                        const currentStatus = (solicitud as any).accounting_status;
+                        // Solo actualizar si está en pendiente_operacional
+                        if (currentStatus === "pendiente_operacional") {
+                            (solicitud as any).accounting_status = "operacional_completo";
+                            await solicitud.save();
+                        }
+                    }
+                } catch (updateError) {
+                    // No lanzar error, solo loguear (la verificación ya se completó)
+                    console.error("Error al actualizar estado de contabilidad en verify_operationals_complete:", updateError);
                 }
             }
 
             return {
-                all_complete: missing.length === 0,
+                all_complete: allComplete,
                 missing_operationals: missing
             };
         } catch (error) {
@@ -2191,7 +2874,11 @@ export class SolicitudesService {
             }
 
             // Verificar que todos los vehículos tengan operacional
-            const operationalCheck = await this.verify_operationals_complete({ solicitud_id });
+            // No actualizar estado aquí porque ya estamos en el flujo de generar prefactura
+            const operationalCheck = await this.verify_operationals_complete({ 
+                solicitud_id,
+                auto_update_status: false 
+            });
             if (!operationalCheck.all_complete) {
                 const missingPlacas = operationalCheck.missing_operationals.map(v => v.placa).join(", ");
                 throw new ResponseError(400, `Faltan operacionales para los siguientes vehículos: ${missingPlacas}`);
@@ -2206,7 +2893,10 @@ export class SolicitudesService {
             (solicitud as any).prefactura = {
                 numero: prefactura_numero,
                 fecha: new Date(),
-                aprobada: false
+                aprobada: false,
+                estado: "pendiente",
+                enviada_al_cliente: false,
+                historial_envios: []
             };
 
             (solicitud as any).accounting_status = "prefactura_pendiente";
@@ -2214,9 +2904,13 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
             return {
                 message: "Prefactura generada exitosamente",
-                solicitud: solicitud.toObject()
+                solicitud: solicitudObj
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
@@ -2261,9 +2955,13 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
             return {
                 message: "Prefactura aprobada exitosamente",
-                solicitud: solicitud.toObject()
+                solicitud: solicitudObj
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
@@ -2305,9 +3003,13 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
             return {
                 message: "Prefactura rechazada",
-                solicitud: solicitud.toObject()
+                solicitud: solicitudObj
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
@@ -2350,6 +3052,146 @@ export class SolicitudesService {
     }
 
     /**
+     * Enviar prefactura al cliente
+     * Acepta la prefactura y la envía al cliente
+     */
+    public async send_prefactura_to_client({
+        solicitud_id,
+        user_id,
+        notas
+    }: {
+        solicitud_id: string;
+        user_id: string;
+        notas?: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar que la prefactura esté aprobada o lista para facturación
+            const accountingStatus = (solicitud as any).accounting_status;
+            if (accountingStatus !== "prefactura_aprobada" && accountingStatus !== "listo_para_facturacion") {
+                throw new ResponseError(400, "La prefactura debe estar aprobada antes de enviarla al cliente");
+            }
+
+            // Validar que existe una prefactura generada
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            // Inicializar prefactura si no existe completamente
+            if (!(solicitud as any).prefactura) {
+                (solicitud as any).prefactura = {};
+            }
+
+            // Inicializar historial si no existe
+            if (!(solicitud as any).prefactura.historial_envios) {
+                (solicitud as any).prefactura.historial_envios = [];
+            }
+
+            // Actualizar estado a aceptada
+            (solicitud as any).prefactura.estado = "aceptada";
+            (solicitud as any).prefactura.enviada_al_cliente = true;
+            (solicitud as any).prefactura.fecha_envio_cliente = new Date();
+            (solicitud as any).prefactura.enviada_por = user_id;
+
+            // Agregar entrada al historial
+            (solicitud as any).prefactura.historial_envios.push({
+                fecha: new Date(),
+                estado: "aceptada",
+                enviado_por: user_id,
+                notas: notas || undefined
+            });
+
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
+            return {
+                message: "Prefactura enviada al cliente exitosamente",
+                solicitud: solicitudObj
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al enviar prefactura al cliente");
+        }
+    }
+
+    /**
+     * Cambiar estado de prefactura
+     * Permite cambiar el estado (aceptada/rechazada) y registrar en historial
+     */
+    public async change_prefactura_status({
+        solicitud_id,
+        user_id,
+        status,
+        notas
+    }: {
+        solicitud_id: string;
+        user_id: string;
+        status: "aceptada" | "rechazada";
+        notas?: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar que existe una prefactura generada
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            // Inicializar prefactura si no existe completamente
+            if (!(solicitud as any).prefactura) {
+                (solicitud as any).prefactura = {};
+            }
+
+            // Inicializar historial si no existe
+            if (!(solicitud as any).prefactura.historial_envios) {
+                (solicitud as any).prefactura.historial_envios = [];
+            }
+
+            // Actualizar estado
+            (solicitud as any).prefactura.estado = status;
+
+            // Si el estado es "aceptada", actualizar campos de envío
+            if (status === "aceptada") {
+                (solicitud as any).prefactura.enviada_al_cliente = true;
+                (solicitud as any).prefactura.fecha_envio_cliente = new Date();
+                (solicitud as any).prefactura.enviada_por = user_id;
+            }
+
+            // Agregar entrada al historial
+            (solicitud as any).prefactura.historial_envios.push({
+                fecha: new Date(),
+                estado: status,
+                enviado_por: user_id,
+                notas: notas || undefined
+            });
+
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
+            return {
+                message: `Prefactura marcada como ${status}`,
+                solicitud: solicitudObj
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al cambiar estado de prefactura");
+        }
+    }
+
+    /**
      * Actualizar estado de operacional cuando se sube un operacional
      * Se llama automáticamente cuando se sube un operacional vinculado a una solicitud
      */
@@ -2362,20 +3204,290 @@ export class SolicitudesService {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) return; // No lanzar error, puede que la solicitud no exista aún
 
-            // Solo actualizar si está en estado pendiente_operacional
-            if ((solicitud as any).accounting_status === "pendiente_operacional") {
+            const currentStatus = (solicitud as any).accounting_status;
+            
+            // Actualizar si está en estado pendiente_operacional o no_iniciado
+            // (no_iniciado puede ocurrir si se sube operacional antes de establecer valores financieros)
+            if (currentStatus === "pendiente_operacional" || currentStatus === "no_iniciado") {
                 // Verificar si todos los vehículos tienen operacional
                 const operationalCheck = await this.verify_operationals_complete({ solicitud_id });
                 
                 if (operationalCheck.all_complete) {
-                    (solicitud as any).accounting_status = "operacional_completo";
-                    await solicitud.save();
+                    // Solo actualizar a operacional_completo si está en pendiente_operacional
+                    // Si está en no_iniciado, mantenerlo así hasta que se establezcan valores financieros
+                    if (currentStatus === "pendiente_operacional") {
+                        (solicitud as any).accounting_status = "operacional_completo";
+                        await solicitud.save();
+                    }
                 }
             }
         } catch (error) {
             // No lanzar error, solo loguear
             console.error("Error al actualizar estado de contabilidad:", error);
         }
+    }
+
+    /**
+     * Enviar correos cuando la solicitud está completamente rellenada
+     * Envía al cliente: hoja de vida del conductor, ficha técnica de vehículos, información de solicitud (PDFs)
+     * Envía al conductor: información de solicitud y manifiesto de pasajeros (PDF)
+     */
+    private async send_emails_solicitud_complete({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }): Promise<void> {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('cliente', 'name email contacts phone')
+                .populate('conductor', 'full_name email')
+                .populate('vehiculo_id')
+                .lean();
+
+            if (!solicitud) return;
+            if (!(solicitud as any).vehiculo_id || !(solicitud as any).conductor) return; // No está completamente rellenada
+
+            const client = (solicitud as any).cliente;
+            const conductor = (solicitud as any).conductor;
+            const vehicle = (solicitud as any).vehiculo_id;
+
+            if (!client || !conductor || !vehicle) return;
+
+            // Obtener emails
+            const clientEmail = client.email || (client.contacts && client.contacts.length > 0 ? client.contacts[0].email : null);
+            const driverEmail = (conductor as any).email;
+
+            if (!clientEmail && !driverEmail) return; // No hay emails para enviar
+
+            // Generar PDFs
+            const { send_client_solicitud_complete, send_driver_solicitud_complete } = await import('@/email/index.email');
+            const { UserService } = await import('@/services/users.service');
+            const { VehicleServices } = await import('@/services/vehicles.service');
+
+            const userService = new UserService();
+            const vehicleService = new VehicleServices();
+
+            // Generar hoja de vida del conductor
+            const driverCvPdf = await userService.generate_driver_technical_sheet_pdf({
+                driver_id: String((solicitud as any).conductor)
+            });
+
+            // Generar ficha técnica del vehículo
+            const vehicleTechnicalSheetPdf = await vehicleService.generate_vehicle_technical_sheet_pdf({
+                vehicle_id: String((solicitud as any).vehiculo_id)
+            });
+
+            // Generar manifiesto de pasajeros
+            const passengerManifestPdf = await this.generate_passenger_manifest_pdf({
+                solicitud_id
+            });
+
+            // Generar PDF de información de solicitud (simplificado - puedes mejorarlo)
+            const solicitudInfoPdf = await this.generate_solicitud_info_pdf({
+                solicitud_id
+            });
+
+            // Preparar información de solicitud
+            const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+            const clientName = (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name;
+
+            // Enviar correo al cliente
+            if (clientEmail) {
+                await send_client_solicitud_complete({
+                    client_name: clientName,
+                    client_email: clientEmail,
+                    solicitud_info: {
+                        fecha: fechaFormatted,
+                        hora_inicio: (solicitud as any).hora_inicio,
+                        origen: (solicitud as any).origen,
+                        destino: (solicitud as any).destino,
+                        n_pasajeros: (solicitud as any).n_pasajeros || 0,
+                        vehiculo_placa: vehicle.placa || "",
+                        conductor_name: (conductor as any).full_name || ""
+                    },
+                    driver_cv_pdf: driverCvPdf,
+                    vehicle_technical_sheets_pdf: [vehicleTechnicalSheetPdf],
+                    solicitud_info_pdf: solicitudInfoPdf
+                });
+            }
+
+            // Enviar correo al conductor
+            if (driverEmail) {
+                await send_driver_solicitud_complete({
+                    driver_name: (conductor as any).full_name || "",
+                    driver_email: driverEmail,
+                    solicitud_info: {
+                        fecha: fechaFormatted,
+                        hora_inicio: (solicitud as any).hora_inicio,
+                        origen: (solicitud as any).origen,
+                        destino: (solicitud as any).destino,
+                        n_pasajeros: (solicitud as any).n_pasajeros || 0,
+                        cliente_name: clientName,
+                        contacto: (solicitud as any).contacto || "",
+                        contacto_phone: (solicitud as any).contacto_phone || ""
+                    },
+                    passenger_manifest_pdf: passengerManifestPdf
+                });
+            }
+        } catch (error) {
+            console.error("Error al enviar correos de solicitud completa:", error);
+            // No lanzar error, solo loguear
+        }
+    }
+
+    /**
+     * Generar PDF de información de solicitud
+     */
+    private async generate_solicitud_info_pdf({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }): Promise<{ filename: string; buffer: Buffer }> {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('cliente', 'name contacts phone')
+                .populate('conductor', 'full_name')
+                .populate('vehiculo_id', 'placa type')
+                .lean();
+
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            const client = (solicitud as any).cliente;
+            const conductor = (solicitud as any).conductor;
+            const vehicle = (solicitud as any).vehiculo_id;
+
+            const fechaExpedicion = dayjs(new Date()).format("DD/MM/YYYY HH:mm");
+            const fechaServicio = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+
+            // Crear HTML simple para el PDF
+            const html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Información de Solicitud</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; padding: 20px; }
+                        h1 { color: #333; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+                        th { background-color: #f2f2f2; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Información de Solicitud de Servicio</h1>
+                    <p><strong>Fecha de Expedición:</strong> ${fechaExpedicion}</p>
+                    <table>
+                        <tr><th>Campo</th><th>Valor</th></tr>
+                        <tr><td>HE</td><td>${(solicitud as any).he || 'N/A'}</td></tr>
+                        <tr><td>Fecha del Servicio</td><td>${fechaServicio}</td></tr>
+                        <tr><td>Hora de Inicio</td><td>${(solicitud as any).hora_inicio || 'N/A'}</td></tr>
+                        <tr><td>Origen</td><td>${(solicitud as any).origen || 'N/A'}</td></tr>
+                        <tr><td>Destino</td><td>${(solicitud as any).destino || 'N/A'}</td></tr>
+                        <tr><td>N° Pasajeros</td><td>${(solicitud as any).n_pasajeros || 0}</td></tr>
+                        <tr><td>Cliente</td><td>${(client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name}</td></tr>
+                        <tr><td>Contacto</td><td>${(solicitud as any).contacto || 'N/A'}</td></tr>
+                        <tr><td>Teléfono Contacto</td><td>${(solicitud as any).contacto_phone || 'N/A'}</td></tr>
+                        <tr><td>Vehículo</td><td>${vehicle?.placa || 'N/A'}</td></tr>
+                        <tr><td>Tipo Vehículo</td><td>${vehicle?.type || 'N/A'}</td></tr>
+                        <tr><td>Conductor</td><td>${(conductor as any)?.full_name || 'N/A'}</td></tr>
+                        ${(solicitud as any).novedades ? `<tr><td>Novedades</td><td>${(solicitud as any).novedades}</td></tr>` : ''}
+                    </table>
+                </body>
+                </html>
+            `;
+
+            const pdfBuffer = await renderHtmlToPdfBuffer(html);
+            const filename = `informacion_solicitud_${(solicitud as any).he || solicitud_id}_${dayjs().format("YYYYMMDD_HHmm")}.pdf`;
+            return { filename, buffer: pdfBuffer };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al generar PDF de información de solicitud");
+        }
+    }
+
+    /**
+     * Helper para populizar los IDs de la prefactura
+     * Populiza: aprobada_por, rechazada_por, enviada_por, historial_envios[].enviado_por
+     */
+    private async populate_prefactura_ids(solicitud: any): Promise<any> {
+        if (!solicitud || !solicitud.prefactura) {
+            return solicitud;
+        }
+
+        const prefactura = solicitud.prefactura;
+        const userFields = 'name full_name email';
+
+        // Recopilar todos los IDs únicos que necesitan populate
+        const userIdsToPopulate = new Set<string>();
+        
+        if (prefactura.aprobada_por) {
+            userIdsToPopulate.add(String(prefactura.aprobada_por));
+        }
+        if (prefactura.rechazada_por) {
+            userIdsToPopulate.add(String(prefactura.rechazada_por));
+        }
+        if (prefactura.enviada_por) {
+            userIdsToPopulate.add(String(prefactura.enviada_por));
+        }
+        
+        if (prefactura.historial_envios && Array.isArray(prefactura.historial_envios)) {
+            prefactura.historial_envios.forEach((item: any) => {
+                if (item.enviado_por) {
+                    userIdsToPopulate.add(String(item.enviado_por));
+                }
+            });
+        }
+
+        // Si no hay IDs para populizar, retornar sin cambios
+        if (userIdsToPopulate.size === 0) {
+            return solicitud;
+        }
+
+        // Hacer una sola consulta para obtener todos los usuarios
+        const userIdsArray = Array.from(userIdsToPopulate);
+        const users = await userModel.find({ _id: { $in: userIdsArray } }).select(userFields).lean();
+        
+        // Crear un mapa para acceso rápido
+        const usersMap = new Map();
+        users.forEach((user: any) => {
+            usersMap.set(String(user._id), user);
+        });
+
+        // Asignar usuarios populizados
+        if (prefactura.aprobada_por) {
+            const userId = String(prefactura.aprobada_por);
+            if (usersMap.has(userId)) {
+                prefactura.aprobada_por = usersMap.get(userId);
+            }
+        }
+
+        if (prefactura.rechazada_por) {
+            const userId = String(prefactura.rechazada_por);
+            if (usersMap.has(userId)) {
+                prefactura.rechazada_por = usersMap.get(userId);
+            }
+        }
+
+        if (prefactura.enviada_por) {
+            const userId = String(prefactura.enviada_por);
+            if (usersMap.has(userId)) {
+                prefactura.enviada_por = usersMap.get(userId);
+            }
+        }
+
+        if (prefactura.historial_envios && Array.isArray(prefactura.historial_envios)) {
+            prefactura.historial_envios.forEach((item: any) => {
+                if (item.enviado_por) {
+                    const userId = String(item.enviado_por);
+                    if (usersMap.has(userId)) {
+                        item.enviado_por = usersMap.get(userId);
+                    }
+                }
+            });
+        }
+
+        return solicitud;
     }
 
     //* #========== PRIVATE METHODS ==========#

@@ -139,7 +139,27 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
         aprobada_fecha: { type: Date, required: false },
         rechazada_por: { type: MongoIdRef, ref: "User", required: false },
         rechazada_fecha: { type: Date, required: false },
-        notas: { type: String, required: false }
+        notas: { type: String, required: false },
+        // Nuevos campos para envío al cliente
+        estado: { type: String, required: false, enum: ["pendiente", "aceptada", "rechazada"], default: "pendiente" },
+        enviada_al_cliente: { type: Boolean, required: false, default: false },
+        fecha_envio_cliente: { type: Date, required: false },
+        enviada_por: { type: MongoIdRef, ref: "User", required: false },
+        historial_envios: {
+            type: [
+                new Schema(
+                    {
+                        fecha: { type: Date, required: true },
+                        estado: { type: String, required: true, enum: ["aceptada", "rechazada"] },
+                        enviado_por: { type: MongoIdRef, ref: "User", required: true },
+                        notas: { type: String, required: false }
+                    },
+                    { _id: false }
+                )
+            ],
+            required: false,
+            default: []
+        }
     },
 
     // Metadata

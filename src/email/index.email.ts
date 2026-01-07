@@ -29,14 +29,17 @@ const replaceVariables = (html: string, variables: Record<string, string>): stri
 };
 
 // Función auxiliar para enviar email
-const sendEmail = async (to: string, subject: string, html: string) => {
+const sendEmail = async (to: string, subject: string, html: string, attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>) => {
     try {
-        const mail_options = {
+        const mail_options: any = {
             from: `"Admin Transporte" <${GLOBAL_ENV.MAILGUN_USER}>`,
             to,
             subject,
             html,
         };
+        if (attachments && attachments.length > 0) {
+            mail_options.attachments = attachments;
+        }
         await transporter.sendMail(mail_options);
     } catch (error) {
         console.log("Error al enviar email:", error);
@@ -365,6 +368,125 @@ export const send_user_verification_otp = async ({
     } catch (error) {
         if (error instanceof ResponseError) throw error;
         console.log("Error al enviar email de verificación OTP:", error);
+    }
+};
+
+// 11. Cliente - Solicitud completamente rellenada con PDFs
+export const send_client_solicitud_complete = async ({
+    client_name,
+    client_email,
+    solicitud_info,
+    driver_cv_pdf,
+    vehicle_technical_sheets_pdf,
+    solicitud_info_pdf
+}: {
+    client_name: string;
+    client_email: string;
+    solicitud_info: {
+        fecha: string;
+        hora_inicio: string;
+        origen: string;
+        destino: string;
+        n_pasajeros: number;
+        vehiculo_placa: string;
+        conductor_name: string;
+    };
+    driver_cv_pdf: { filename: string; buffer: Buffer };
+    vehicle_technical_sheets_pdf: Array<{ filename: string; buffer: Buffer }>;
+    solicitud_info_pdf: { filename: string; buffer: Buffer };
+}) => {
+    try {
+        const templatePath = path.join(__dirname, "templates", "cliente-solicitud-completa.html");
+        const html_template = fs.readFileSync(templatePath, "utf8");
+
+        const html_final = replaceVariables(html_template, {
+            client_name,
+            fecha: solicitud_info.fecha,
+            hora_inicio: solicitud_info.hora_inicio,
+            origen: solicitud_info.origen,
+            destino: solicitud_info.destino,
+            n_pasajeros: solicitud_info.n_pasajeros.toString(),
+            vehiculo_placa: solicitud_info.vehiculo_placa,
+            conductor_name: solicitud_info.conductor_name,
+            year: YEAR.toString()
+        });
+
+        // Preparar adjuntos
+        const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [
+            {
+                filename: driver_cv_pdf.filename,
+                content: driver_cv_pdf.buffer,
+                contentType: "application/pdf"
+            },
+            {
+                filename: solicitud_info_pdf.filename,
+                content: solicitud_info_pdf.buffer,
+                contentType: "application/pdf"
+            },
+            ...vehicle_technical_sheets_pdf.map(v => ({
+                filename: v.filename,
+                content: v.buffer,
+                contentType: "application/pdf"
+            }))
+        ];
+
+        await sendEmail(client_email, "Información Completa de Servicio - Admin Transporte", html_final, attachments);
+    } catch (error) {
+        if (error instanceof ResponseError) throw error;
+        console.log("Error al enviar email de solicitud completa al cliente:", error);
+    }
+};
+
+// 12. Conductor - Solicitud completamente rellenada con manifiesto
+export const send_driver_solicitud_complete = async ({
+    driver_name,
+    driver_email,
+    solicitud_info,
+    passenger_manifest_pdf
+}: {
+    driver_name: string;
+    driver_email: string;
+    solicitud_info: {
+        fecha: string;
+        hora_inicio: string;
+        origen: string;
+        destino: string;
+        n_pasajeros: number;
+        cliente_name: string;
+        contacto: string;
+        contacto_phone?: string;
+    };
+    passenger_manifest_pdf: { filename: string; buffer: Buffer };
+}) => {
+    try {
+        const templatePath = path.join(__dirname, "templates", "conductor-solicitud-completa.html");
+        const html_template = fs.readFileSync(templatePath, "utf8");
+
+        const html_final = replaceVariables(html_template, {
+            driver_name,
+            fecha: solicitud_info.fecha,
+            hora_inicio: solicitud_info.hora_inicio,
+            origen: solicitud_info.origen,
+            destino: solicitud_info.destino,
+            n_pasajeros: solicitud_info.n_pasajeros.toString(),
+            cliente_name: solicitud_info.cliente_name,
+            contacto: solicitud_info.contacto,
+            contacto_phone: solicitud_info.contacto_phone || "N/A",
+            year: YEAR.toString()
+        });
+
+        const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [
+            {
+                filename: passenger_manifest_pdf.filename,
+                content: passenger_manifest_pdf.buffer,
+                contentType: "application/pdf"
+            }
+        ];
+
+        await sendEmail(driver_email, "Información de Servicio Asignado - Admin Transporte", html_final, attachments);
+    } catch (error) {
+        if (error instanceof ResponseError) throw error;
+        console.log("Error al enviar email de solicitud completa al conductor:", error);
     }
 };
 

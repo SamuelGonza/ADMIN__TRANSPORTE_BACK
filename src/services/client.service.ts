@@ -110,7 +110,14 @@ export class ClientService {
 
             if (!ok_password) throw new ResponseError(401, "Contraseña incorrecta");
 
-            const token = generate_token_session({ id: find_client._id.toString(), role: "cliente" as any, company_id: find_client.company_id.toString() });
+            // Extraer el ID de company_id (puede ser ObjectId o objeto populado)
+            const companyId = find_client.company_id 
+                ? (typeof find_client.company_id === 'string' 
+                    ? find_client.company_id 
+                    : (find_client.company_id as any)?._id?.toString() || (find_client.company_id as any)?.toString())
+                : undefined;
+
+            const token = generate_token_session({ id: find_client._id.toString(), role: "cliente" as any, company_id: companyId });
 
             return {
                 token,

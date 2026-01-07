@@ -241,11 +241,33 @@ export class ClientController {
             // Obtener datos actualizados del cliente
             const clientData = await this.clientService.get_client_by_id({ id: user._id });
             
+            // Extraer company_id correctamente (puede ser ObjectId, string, o objeto populado)
+            let clientCompanyId: string | undefined;
+            if (clientData.company_id) {
+                if (typeof clientData.company_id === 'string') {
+                    clientCompanyId = clientData.company_id;
+                } else if (typeof clientData.company_id === 'object') {
+                    // Si es un objeto, extraer el _id
+                    const obj = clientData.company_id as any;
+                    if (obj._id) {
+                        clientCompanyId = typeof obj._id === 'object' && obj._id.toString
+                            ? obj._id.toString()
+                            : String(obj._id);
+                    } else {
+                        // Si no tiene _id, intentar convertir directamente
+                        clientCompanyId = String(obj);
+                    }
+                } else {
+                    clientCompanyId = String(clientData.company_id);
+                }
+            }
+            
             // Generar nuevo token
             const { generate_token_session } = await import("@/utils/generate");
             const newToken = generate_token_session({ 
                 id: user._id, 
-                role: "cliente" as any
+                role: "cliente" as any,
+                company_id: clientCompanyId
             });
 
             // Crear nueva cookie de sesión

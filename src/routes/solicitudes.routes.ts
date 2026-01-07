@@ -2,6 +2,7 @@ import { Router } from "express";
 import { SolicitudesController } from "@/controllers/solicitudes.controller";
 import { ClienteAuth } from "@/auth/cliente.auth";
 import { CoordinadorAuth } from "@/auth/coordinador.auth";
+import { CoordinadoresAuth } from "@/auth/coordinadores.auth";
 import { ComercialAuth } from "@/auth/comercial.auth";
 import { GestionAuth } from "@/auth/gestion.auth";
 import { OperadorAuth } from "@/auth/operador.auth";
@@ -24,8 +25,9 @@ const solicitudesController = new SolicitudesController();
  *     summary: Crear solicitud (cliente)
  *     description: |
  *       Crea una solicitud en estado `pending`. El `client_id` se toma del token del cliente.
- *       La bitácora se busca automáticamente según el mes y año de la fecha del servicio.
- *       Si no existe una bitácora para ese mes/año, se crea automáticamente.
+ *       La bitácora se asigna AUTOMÁTICAMENTE según el mes y año ACTUAL (no la fecha del servicio).
+ *       Si no existe una bitácora para el mes/año actual, se crea automáticamente.
+ *       NO se debe enviar `bitacora_id` en el body - se ignora si se envía.
  *       Body mínimo: fecha, hora_inicio, origen, destino, n_pasajeros.
  *     security:
  *       - sessionCookie: []
@@ -36,17 +38,16 @@ const solicitudesController = new SolicitudesController();
  *           schema:
  *             type: object
  *             properties:
- *               bitacora_id: 
- *                 type: string
- *                 description: Opcional. Si se proporciona, se usa esa bitácora. Si no, se busca/crea automáticamente según la fecha.
- *               fecha: { type: string, format: date-time }
- *               hora_inicio: { type: string, example: "08:00" }
- *               origen: { type: string }
- *               destino: { type: string }
- *               n_pasajeros: { type: number }
- *               requested_passengers: { type: number }
- *               estimated_km: { type: number }
- *               estimated_hours: { type: number }
+ *               fecha: { type: string, format: date-time, description: "Fecha del servicio" }
+ *               hora_inicio: { type: string, example: "08:00", description: "Hora de inicio del servicio" }
+ *               origen: { type: string, description: "Origen del servicio" }
+ *               destino: { type: string, description: "Destino del servicio" }
+ *               n_pasajeros: { type: number, description: "Número de pasajeros" }
+ *               contacto: { type: string, description: "Opcional: nombre del contacto" }
+ *               contacto_phone: { type: string, description: "Opcional: teléfono del contacto" }
+ *               requested_passengers: { type: number, description: "Opcional: pasajeros solicitados (multi-vehículo)" }
+ *               estimated_km: { type: number, description: "Opcional: kilómetros estimados" }
+ *               estimated_hours: { type: number, description: "Opcional: horas estimadas" }
  *             required: [fecha, hora_inicio, origen, destino, n_pasajeros]
  *     responses:
  *       201:
@@ -67,6 +68,7 @@ router.post("/client", ClienteAuth, solicitudesController.create_solicitud_clien
  *     summary: Crear solicitud (gestión/coordinador) - ya aceptada
  *     description: |
  *       Crea una solicitud en estado `accepted` y asigna vehículo/conductor.
+ *       El campo `he` se genera automáticamente como consecutivo por compañía.
  *     security:
  *       - sessionCookie: []
  *     requestBody:
@@ -75,7 +77,25 @@ router.post("/client", ClienteAuth, solicitudesController.create_solicitud_clien
  *         application/json:
  *           schema:
  *             type: object
- *             additionalProperties: true
+ *             properties:
+ *               bitacora_id: { type: string, required: true }
+ *               cliente_id: { type: string, required: true }
+ *               empresa: { type: string, enum: [travel, national], required: true }
+ *               fecha: { type: string, format: date-time, required: true }
+ *               hora_inicio: { type: string, required: true }
+ *               origen: { type: string, required: true }
+ *               destino: { type: string, required: true }
+ *               n_pasajeros: { type: number, required: true }
+ *               placa: { type: string, required: true }
+ *               conductor_id: { type: string, description: "Opcional: conductor del vehículo" }
+ *               requested_passengers: { type: number }
+ *               estimated_km: { type: number }
+ *               estimated_hours: { type: number }
+ *               contract_id: { type: string }
+ *               contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract] }
+ *               contract_charge_amount: { type: number }
+ *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
+ *             required: [bitacora_id, cliente_id, empresa, fecha, hora_inicio, origen, destino, n_pasajeros, placa]
  *     responses:
  *       201:
  *         description: Solicitud creada y aprobada
@@ -446,7 +466,7 @@ router.post("/:id/suggest-vehicles", CoordinadorAuth, solicitudesController.sugg
  *                       items:
  *                         type: object
  */
-router.post("/find-vehicles", CoordinadorAuth, solicitudesController.find_vehicles_for_passengers.bind(solicitudesController));
+router.post("/find-vehicles", CoordinadoresAuth, solicitudesController.find_vehicles_for_passengers.bind(solicitudesController));
 
 // Confirmar asignación multi-vehículo (persistir)
 /**
@@ -558,7 +578,6 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  *           schema:
  *             type: object
  *             properties:
- *               he: { type: string }
  *               empresa: { type: string, enum: [travel, national] }
  *               placa: { type: string, example: "ABC123" }
  *               conductor_id: { type: string, description: "Opcional: elegir conductor del listado del vehículo" }
@@ -569,7 +588,7 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  *               contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract] }
  *               contract_charge_amount: { type: number }
  *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
- *             required: [he, empresa, placa]
+ *             required: [empresa, placa]
  *     responses:
  *       200:
  *         description: Solicitud aceptada
@@ -899,6 +918,74 @@ router.put("/:id/reject-prefactura", ContabilidadAuth, solicitudesController.rej
  *         description: Solicitud marcada como lista para facturación
  */
 router.put("/:id/mark-ready-for-billing", ContabilidadAuth, solicitudesController.mark_ready_for_billing.bind(solicitudesController));
+
+// Enviar prefactura al cliente
+/**
+ * @openapi
+ * /solicitudes/{id}/send-prefactura-to-client:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Enviar prefactura al cliente (contabilidad)
+ *     description: |
+ *       Acepta la prefactura y la envía al cliente. Marca el estado como "aceptada" y registra el envío en el historial.
+ *       Requiere que la prefactura esté aprobada.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notas: { type: string, description: "Notas opcionales sobre el envío" }
+ *     responses:
+ *       200:
+ *         description: Prefactura enviada al cliente
+ *       400:
+ *         description: Error de validación
+ */
+router.post("/:id/send-prefactura-to-client", ContabilidadAuth, solicitudesController.send_prefactura_to_client.bind(solicitudesController));
+
+// Cambiar estado de prefactura
+/**
+ * @openapi
+ * /solicitudes/{id}/change-prefactura-status:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Cambiar estado de prefactura (contabilidad)
+ *     description: |
+ *       Permite cambiar el estado de la prefactura (aceptada/rechazada) y registrar el cambio en el historial.
+ *       Esto permite reenviar la prefactura después de haberla enviado previamente.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status: { type: string, enum: [aceptada, rechazada], description: "Estado a cambiar" }
+ *               notas: { type: string, description: "Notas opcionales sobre el cambio" }
+ *             required: [status]
+ *     responses:
+ *       200:
+ *         description: Estado de prefactura actualizado
+ *       400:
+ *         description: Error de validación
+ */
+router.put("/:id/change-prefactura-status", ContabilidadAuth, solicitudesController.change_prefactura_status.bind(solicitudesController));
 
 export default router;
 
