@@ -77,56 +77,58 @@ export class SolicitudesService {
      * Genera el siguiente consecutivo HE para una compañía
      * Busca el HE más alto y lo incrementa en 1
      */
-    private async generate_next_he(company_id: string): Promise<string> {
+    private async generate_next_he(company_id: string, empresa_nombre: string = "HE"): Promise<string> {
         try {
-            // Normalizar company_id a ObjectId
             const company_id_obj = new mongoose.Types.ObjectId(company_id);
-
-            // Buscar todas las solicitudes de la compañía
-            // Necesitamos obtener el company_id desde las bitácoras o desde el cliente
-            // Primero, obtener todas las bitácoras de la compañía
             const bitacoras = await bitacoraModel.find({ company_id: company_id_obj }).select('_id').lean();
             const bitacora_ids = bitacoras.map(b => b._id);
 
-            if (bitacora_ids.length === 0) {
-                // Si no hay bitácoras, empezar desde 1
-                return "1";
+            // Determinar prefijo (primeras 3 letras en mayúsculas)
+            // Ejemplo: "national" -> "NAT", "travel" -> "TRA"
+            let prefix = "HE";
+            if (empresa_nombre && empresa_nombre.trim().length >= 3) {
+                prefix = empresa_nombre.trim().substring(0, 3).toUpperCase();
+            } else if (empresa_nombre) {
+                prefix = empresa_nombre.trim().toUpperCase();
             }
 
-            // Buscar la solicitud con el HE más alto (numérico)
-            // El HE puede ser un string numérico, así que necesitamos convertirlo a número para comparar
+            if (bitacora_ids.length === 0) {
+                return `${prefix}-1`;
+            }
+
+            // Buscar todas las solicitudes de la compañía que coincidan con el patrón del prefijo
+            const regex = new RegExp(`^${prefix}-\\d+$`);
+            
             const solicitudes = await solicitudModel
-                .find({ bitacora_id: { $in: bitacora_ids } })
+                .find({ 
+                    bitacora_id: { $in: bitacora_ids },
+                    he: { $regex: regex }
+                })
                 .select('he')
                 .lean();
 
             if (!solicitudes || solicitudes.length === 0) {
-                // Si no hay solicitudes, empezar desde 1
-                return "1";
+                return `${prefix}-1`;
             }
 
             // Extraer números del HE y encontrar el máximo
-            let maxHe = 0;
+            let maxNum = 0;
             for (const solicitud of solicitudes) {
-                const he = (solicitud as any).he;
-                if (he && typeof he === 'string') {
-                    // Intentar extraer el número del string
-                    const heNumber = parseInt(he, 10);
-                    if (!isNaN(heNumber) && heNumber > maxHe) {
-                        maxHe = heNumber;
-                    }
-                } else if (typeof he === 'number') {
-                    if (he > maxHe) {
-                        maxHe = he;
+                const heStr = (solicitud as any).he;
+                if (heStr && typeof heStr === 'string') {
+                    const parts = heStr.split('-');
+                    if (parts.length === 2) {
+                        const num = parseInt(parts[1], 10);
+                        if (!isNaN(num) && num > maxNum) {
+                            maxNum = num;
+                        }
                     }
                 }
             }
-
-            // Incrementar y devolver como string
-            return String(maxHe + 1);
+            
+            return `${prefix}-${maxNum + 1}`;
         } catch (error) {
             console.error("Error al generar HE consecutivo:", error);
-            // En caso de error, devolver un timestamp como fallback
             return String(Date.now());
         }
     }
@@ -297,6 +299,7 @@ export class SolicitudesService {
         payload: {
             // bitacora_id REMOVIDO - se asigna automáticamente según mes/año actual
             fecha: Date,
+            fecha_final: Date, // Fecha final del servicio
             hora_inicio: string,
             origen: string,
             destino: string,
@@ -306,16 +309,24 @@ export class SolicitudesService {
             requested_passengers?: number,
             estimated_km?: number,
             estimated_hours?: number,
+            observaciones_cliente?: string, // Observaciones exclusivas del cliente
+            empresa?: string, // Empresa seleccionada (para el consecutivo HE)
         }
     }) {
         try {
             // Validar fecha y hora
             const fechaServicio = dayjs(payload.fecha);
+            const fechaFinalServicio = dayjs(payload.fecha_final);
             const fechaActual = dayjs().startOf('day');
             
             // Validar que la fecha no sea menor al día actual
             if (fechaServicio.isBefore(fechaActual, 'day')) {
                 throw new ResponseError(400, "La fecha del servicio no puede ser menor al día actual");
+            }
+
+            // Validar que la fecha final no sea menor a la fecha de inicio
+            if (fechaFinalServicio.isBefore(fechaServicio, 'day')) {
+                throw new ResponseError(400, "La fecha final no puede ser menor a la fecha de inicio");
             }
 
             // Si la fecha es hoy, validar que la hora de inicio no sea menor a la hora actual
@@ -357,9 +368,11 @@ export class SolicitudesService {
             // Normalizar fecha para evitar problemas de timezone
             // Asegurar que la fecha se guarde como fecha local sin hora
             const fechaNormalizada = dayjs(payload.fecha).startOf('day').toDate();
+            const fechaFinalNormalizada = dayjs(payload.fecha_final).startOf('day').toDate();
 
             // Generar consecutivo HE automáticamente
-            const next_he = await this.generate_next_he(client_company_id_str);
+            const empresa_seleccionada = payload.empresa || "national";
+            const next_he = await this.generate_next_he(client_company_id_str, empresa_seleccionada);
 
             // Crear la solicitud con status pending
             const new_solicitud = await solicitudModel.create({
@@ -367,6 +380,7 @@ export class SolicitudesService {
 
                 // Datos proporcionados por el cliente
                 fecha: fechaNormalizada,
+                fecha_final: fechaFinalNormalizada,
                 hora_inicio: payload.hora_inicio,
                 origen: payload.origen,
                 destino: payload.destino,
@@ -376,6 +390,7 @@ export class SolicitudesService {
                 requested_passengers: payload.requested_passengers,
                 estimated_km: payload.estimated_km,
                 estimated_hours: payload.estimated_hours,
+                observaciones_cliente: payload.observaciones_cliente,
 
                 // Datos del cliente (auto-rellenados, pero el cliente puede cambiar contacto y contacto_phone)
                 cliente: client_id,
@@ -384,7 +399,7 @@ export class SolicitudesService {
 
                 // Campos vacíos/default que se llenarán después
                 he: next_he, // Generado automáticamente
-                empresa: "national", // default
+                empresa: empresa_seleccionada,
                 hora_final: "",
                 total_horas: 0,
                 novedades: "",
@@ -464,8 +479,9 @@ export class SolicitudesService {
 
             // Información básica
             // he REMOVIDO - se genera automáticamente como consecutivo por compañía
-            empresa: "travel" | "national",
+            empresa: "travel" | "national" | string,
             fecha: Date,
+            fecha_final: Date, // Fecha final del servicio
             hora_inicio: string,
             origen: string,
             destino: string,
@@ -502,11 +518,17 @@ export class SolicitudesService {
         try {
             // Validar fecha y hora
             const fechaServicio = dayjs(payload.fecha);
+            const fechaFinalServicio = dayjs(payload.fecha_final);
             const fechaActual = dayjs().startOf('day');
             
             // Validar que la fecha no sea menor al día actual
             if (fechaServicio.isBefore(fechaActual, 'day')) {
                 throw new ResponseError(400, "La fecha del servicio no puede ser menor al día actual");
+            }
+
+            // Validar que la fecha final no sea menor a la fecha de inicio
+            if (fechaFinalServicio.isBefore(fechaServicio, 'day')) {
+                throw new ResponseError(400, "La fecha final no puede ser menor a la fecha de inicio");
             }
 
             // Si la fecha es hoy, validar que la hora de inicio no sea menor a la hora actual
@@ -531,10 +553,11 @@ export class SolicitudesService {
             const client_company_id_str = String(client_company_id);
 
             // Generar consecutivo HE automáticamente
-            const next_he = await this.generate_next_he(client_company_id_str);
+            const next_he = await this.generate_next_he(client_company_id_str, payload.empresa);
 
             // Normalizar fecha para evitar problemas de timezone
             const fechaNormalizada = dayjs(payload.fecha).startOf('day').toDate();
+            const fechaFinalNormalizada = dayjs(payload.fecha_final).startOf('day').toDate();
 
             const loc = await this.resolve_locations({
                 company_id: client_company_id_str,
@@ -663,6 +686,7 @@ export class SolicitudesService {
                 he: next_he, // Generado automáticamente
                 empresa: payload.empresa,
                 fecha: fechaNormalizada,
+                fecha_final: fechaFinalNormalizada, // NUEVO
                 hora_inicio: payload.hora_inicio,
                 origen: payload.origen,
                 destino: payload.destino,
@@ -2864,12 +2888,12 @@ export class SolicitudesService {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
-            // Validar que la solicitud esté lista para contabilidad
-            if (!solicitud.valor_a_facturar || solicitud.valor_a_facturar <= 0) {
+            // Validar que la solicitud tenga valores definidos (puede ser 0 para solicitudes gratuitas)
+            if (solicitud.valor_a_facturar === undefined || solicitud.valor_a_facturar === null) {
                 throw new ResponseError(400, "La solicitud no tiene valores de venta definidos");
             }
 
-            if (!solicitud.valor_cancelado || solicitud.valor_cancelado <= 0) {
+            if (solicitud.valor_cancelado === undefined || solicitud.valor_cancelado === null) {
                 throw new ResponseError(400, "La solicitud no tiene valores de costos definidos");
             }
 

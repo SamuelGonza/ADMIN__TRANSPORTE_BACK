@@ -15,6 +15,7 @@ export interface BitacoraSolicitud extends Document {
     he: string; // HE (código de servicio)
     empresa: "travel" | "national" | string; // EMPRESA
     fecha: Date; // FECHA
+    fecha_final: Date; // FECHA FINAL
     hora_inicio: string; // HORA (inicio)
     hora_final: string; // HORA (final)
     total_horas: number; // Total de horas (mejor como number para cálculos)
@@ -28,6 +29,7 @@ export interface BitacoraSolicitud extends Document {
     origen: string; // ORIGEN
     destino: string; // DESTINO
     novedades: string; // NOVEDADES
+    observaciones_cliente?: string; // Observaciones del cliente
     origen_location_id?: ObjectId;
     destino_location_id?: ObjectId;
 

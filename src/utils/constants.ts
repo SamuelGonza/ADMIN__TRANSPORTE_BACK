@@ -33,6 +33,8 @@ export const GLOBAL_ENV = {
 
     FRONT_DOMAIN: process.env.FRONT_DOMAIN as string,
     ROUTER_SUBFIJE: process.env.ROUTER_SUBFIJE as string,
+
+    WEBHOOK_SECRET: process.env.WEBHOOK_SECRET as string,
 } as const;
 
 export const DEFAULT_PROFILE: MediaTypes = {

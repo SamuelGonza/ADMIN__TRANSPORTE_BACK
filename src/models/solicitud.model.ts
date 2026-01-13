@@ -9,6 +9,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     he: { type: String, required: true }, // HE (código de servicio)
     empresa: { type: String, required: true, enum: ["travel", "national"] }, // EMPRESA
     fecha: { type: Date, required: true }, // FECHA
+    fecha_final: { type: Date, required: true }, // FECHA FINAL
     hora_inicio: { type: String, required: true }, // HORA (inicio)
     hora_final: { type: String, required: false, default: "" }, // HORA (final) - se completa cuando termina el servicio
     total_horas: { type: Number, required: true }, // Total de horas
@@ -22,6 +23,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     origen: { type: String, required: true }, // ORIGEN
     destino: { type: String, required: true }, // DESTINO
     novedades: { type: String, default: "" }, // NOVEDADES
+    observaciones_cliente: { type: String, required: false }, // Observaciones del cliente
     origen_location_id: { type: MongoIdRef, ref: "Location", required: false },
     destino_location_id: { type: MongoIdRef, ref: "Location", required: false },
 
