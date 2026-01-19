@@ -86,6 +86,7 @@ export interface BitacoraSolicitud extends Document {
     valor_a_facturar: number; // VALOR A FACTURAR
     n_factura: string; // N° FACTURA
     fecha_factura?: Date; // FECHA de factura (si existe en el Excel)
+    factura_id?: ObjectId; // Referencia a la colección Facturas (si se genera por el sistema)
 
     // Utilidad
     utilidad: number; // UTILIDAD (valor)
@@ -122,10 +123,33 @@ export interface BitacoraSolicitud extends Document {
         }>;
     };
 
-    // Metadata
+    // Metadata y Auditoría
     created: Date;
     created_by?: ObjectId; // Usuario que creó el registro
     last_modified_by?: ObjectId; // Usuario que hizo la última modificación
+    
+    // Campos de auditoría para rastrear acciones
+    approved_by?: ObjectId; // Usuario que aprobó la solicitud
+    approved_at?: Date; // Fecha de aprobación
+    
+    assigned_vehicles_by?: ObjectId; // Usuario que asignó vehículos/conductores
+    assigned_vehicles_at?: Date; // Fecha de asignación de vehículos
+    
+    assigned_costs_by?: ObjectId; // Usuario que asignó valores de costos (valor_cancelado)
+    assigned_costs_at?: Date; // Fecha de asignación de costos
+    
+    assigned_sales_by?: ObjectId; // Usuario que asignó valores de venta (valor_a_facturar)
+    assigned_sales_at?: Date; // Fecha de asignación de ventas
+    
+    uploaded_operationals_by?: ObjectId; // Usuario que subió operacionales
+    uploaded_operationals_at?: Date; // Fecha de subida de operacionales
+    
+    generated_prefactura_by?: ObjectId; // Usuario que generó la prefactura
+    generated_prefactura_at?: Date; // Fecha de generación de prefactura
+    
+    generated_factura_by?: ObjectId; // Usuario que generó la factura
+    generated_factura_at?: Date; // Fecha de generación de factura
+    
     status: "pending" | "accepted" | "rejected" // Estado de aprobación
     service_status: "pendiente_de_asignacion" | "sin_asignacion" | "not-started" | "started" | "finished" // Estado de ejecución del servicio
 }

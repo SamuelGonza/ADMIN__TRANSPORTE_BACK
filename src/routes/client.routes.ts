@@ -288,8 +288,17 @@ router.get("/:id", GestionAuth, clientController.get_client_by_id.bind(clientCon
  *               name: { type: string }
  *               contact_name: { type: string }
  *               contact_phone: { type: string }
+ *               contacts: 
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     name: { type: string }
+ *                     phone: { type: string }
  *               phone: { type: string }
  *               email: { type: string, format: email }
+ *               documento_tipo: { type: string, enum: [NIT, CC, CE, PASAPORTE, OTRO] }
+ *               documento_numero: { type: string }
  *             required: [name, email]
  *     responses:
  *       200:

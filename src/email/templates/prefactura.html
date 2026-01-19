@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prefactura {{prefactura_numero}}</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; padding: 20px; }
+      .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+      .header h1 { margin: 0; color: #333; font-size: 24px; }
+      .header h2 { margin: 5px 0; color: #666; font-size: 18px; font-weight: normal; }
+      .company-info { text-align: center; margin-bottom: 20px; }
+      .info-section { margin-bottom: 20px; }
+      .info-section h3 { color: #333; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+      th { background-color: #f2f2f2; font-weight: bold; }
+      .text-right { text-align: right; }
+      .totals { margin-top: 20px; }
+      .totals table { width: 50%; margin-left: auto; }
+      .totals td { font-weight: bold; }
+      .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 10px; color: #666; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>PREFACTURA</h1>
+      <h2>N° {{prefactura_numero}}</h2>
+    </div>
+
+    <div class="company-info">
+      <p><strong>{{company_name}}</strong></p>
+      <p>NIT: {{company_nit}}</p>
+    </div>
+
+    <div class="info-section">
+      <h3>Información del Cliente</h3>
+      <table>
+        <tr><td><strong>Cliente:</strong></td><td>{{cliente_name}}</td></tr>
+        <tr><td><strong>Contacto:</strong></td><td>{{contacto}}</td></tr>
+        <tr><td><strong>Teléfono:</strong></td><td>{{contacto_phone}}</td></tr>
+        <tr><td><strong>Email:</strong></td><td>{{cliente_email}}</td></tr>
+      </table>
+    </div>
+
+    <div class="info-section">
+      <h3>Información del Servicio</h3>
+      <table>
+        <tr><td><strong>HE:</strong></td><td>{{he}}</td></tr>
+        <tr><td><strong>Fecha de Inicio:</strong></td><td>{{fecha_inicio}}</td></tr>
+        <tr><td><strong>Fecha Final:</strong></td><td>{{fecha_final}}</td></tr>
+        <tr><td><strong>Hora de Inicio:</strong></td><td>{{hora_inicio}}</td></tr>
+        <tr><td><strong>Origen:</strong></td><td>{{origen}}</td></tr>
+        <tr><td><strong>Destino:</strong></td><td>{{destino}}</td></tr>
+        <tr><td><strong>N° Pasajeros:</strong></td><td>{{n_pasajeros}}</td></tr>
+      </table>
+    </div>
+
+    <div class="info-section">
+      <h3>Vehículos y Conductores Asignados</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Placa</th>
+            <th>Conductor</th>
+            <th>Pasajeros Asignados</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{vehiculos_table}}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="info-section">
+      <h3>Valor a Pagar</h3>
+      <table>
+        <tr>
+          <td><strong>Total a Pagar:</strong></td>
+          <td class="text-right" style="font-size: 16px; font-weight: bold;">{{valor_a_facturar}}</td>
+        </tr>
+      </table>
+    </div>
+
+    {{novedades_section}}
+
+    <div class="footer">
+      <p>Fecha de Expedición: {{fecha_expedicion}}</p>
+      <p>Este documento es una prefactura y no tiene validez fiscal</p>
+    </div>
+  </body>
+</html>

@@ -48,12 +48,25 @@
         <div class="row">
           <div class="col">
             <div><strong>Vehículo:</strong> Placa {{vehiculo_placa}} | Interno {{vehiculo_interno}} | Modelo {{vehiculo_modelo}}</div>
-            <div><strong>Capacidad:</strong> {{vehiculo_seats}} pasajeros</div>
+            <div><strong>Pasajeros asignados:</strong> {{assigned_passengers}}</div>
           </div>
           <div class="col">
             <div><strong>Conductor asignado:</strong> {{conductor_nombre}}</div>
             <div><strong>Documento:</strong> {{conductor_documento}}</div>
             <div><strong>Teléfono:</strong> {{conductor_telefono}}</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <div class="col">
+            <div><strong>Cliente:</strong> {{cliente_name}}</div>
+            <div><strong>Contacto:</strong> {{contacto_name}} - {{contacto_phone}}</div>
+          </div>
+          <div class="col">
+            <div><strong>Fecha inicio:</strong> {{fecha_inicio}}</div>
+            <div><strong>Fecha final:</strong> {{fecha_final}}</div>
+            <div><strong>Hora inicio:</strong> {{hora_inicio}}</div>
+            <div><strong>Origen:</strong> {{origen}}</div>
+            <div><strong>Destino:</strong> {{destino}}</div>
           </div>
         </div>
       </div>
@@ -74,9 +87,6 @@
           {{rows}}
         </tbody>
       </table>
-      <div class="small" style="margin-top:6px;">
-        Nota: La tabla contiene {{vehiculo_seats}} filas (una por cada cupo del vehículo).
-      </div>
     </div>
 
     <div class="footer">

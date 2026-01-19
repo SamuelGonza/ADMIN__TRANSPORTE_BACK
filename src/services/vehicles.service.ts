@@ -374,6 +374,16 @@ export class VehicleServices {
                     await solicitudesService.calcular_liquidacion({ solicitud_id });
                     // Actualizar estado de contabilidad si todos los operacionales están completos
                     await solicitudesService.update_accounting_status_on_operational_upload({ solicitud_id });
+                    
+                    // Guardar auditoría de subida de operacionales
+                    const solicitudModel = (await import("@/models/solicitud.model")).default;
+                    const solicitud = await solicitudModel.findById(solicitud_id);
+                    if (solicitud && user_id) {
+                        (solicitud as any).uploaded_operationals_by = user_id;
+                        (solicitud as any).uploaded_operationals_at = new Date();
+                        (solicitud as any).last_modified_by = user_id;
+                        await solicitud.save();
+                    }
                 } catch (calcError) {
                     console.log("Error al recalcular liquidación:", calcError);
                     // No lanzar error, solo loguear (el gasto ya se guardó)
@@ -1012,7 +1022,28 @@ export class VehicleServices {
         let result = html;
         Object.keys(variables).forEach((key) => {
             const value = variables[key] || "";
-            result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
+            const placeholder = `{{${key}}}`;
+            if (result.includes(placeholder)) {
+                // Usar replace simple en lugar de regex para strings muy grandes
+                // El regex puede fallar con strings muy grandes (como imágenes base64)
+                const placeholderRegex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "g");
+                const beforeLength = result.length;
+                result = result.replace(placeholderRegex, value);
+                const afterLength = result.length;
+                
+                // Log para variables grandes (imágenes)
+                if (value.length > 10000) {
+                    console.log(`[replaceVariables] Reemplazado ${placeholder}: ${beforeLength} -> ${afterLength} caracteres (valor: ${value.length} chars)`);
+                    // Verificar que el reemplazo funcionó
+                    if (result.includes(placeholder)) {
+                        console.error(`[replaceVariables] ERROR: El placeholder ${placeholder} aún existe después del reemplazo!`);
+                        // Fallback: reemplazo directo
+                        result = result.split(placeholder).join(value);
+                    }
+                }
+            } else {
+                console.warn(`[replaceVariables] Placeholder ${placeholder} no encontrado en el template`);
+            }
         });
         return result;
     }
@@ -1089,6 +1120,8 @@ export class VehicleServices {
                 conductor_nombre: driver.full_name || "",
                 conductor_documento: driver?.document?.number ? String(driver.document.number) : "",
                 conductor_telefono: driver?.contact?.phone || "",
+
+                documentos_images: "",
             });
 
             const pdfBuffer = await renderHtmlToPdfBuffer(html);

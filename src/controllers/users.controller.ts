@@ -547,6 +547,24 @@ export class UsersController {
                 };
             }
 
+            // Normalizar tipo_sangre (convertir a mayúsculas)
+            if (payload.tipo_sangre !== undefined && typeof payload.tipo_sangre === 'string') {
+                payload.tipo_sangre = payload.tipo_sangre.toUpperCase();
+            }
+
+            // Normalizar genero (convertir "masculino"/"femenino" a "M"/"F")
+            if (payload.genero !== undefined && typeof payload.genero === 'string') {
+                const generoLower = payload.genero.toLowerCase();
+                if (generoLower === 'masculino' || generoLower === 'm' || generoLower === 'male') {
+                    payload.genero = 'M';
+                } else if (generoLower === 'femenino' || generoLower === 'f' || generoLower === 'female') {
+                    payload.genero = 'F';
+                } else if (generoLower === 'otro' || generoLower === 'other') {
+                    payload.genero = 'Otro';
+                }
+                // Si no coincide con ninguno, mantener el valor original (puede ser "M", "F", "Otro" ya)
+            }
+
             const updated = await this.userService.update_driver_profile({
                 driver_id: target_driver_id,
                 payload

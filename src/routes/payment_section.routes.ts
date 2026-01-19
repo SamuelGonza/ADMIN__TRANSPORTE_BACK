@@ -67,5 +67,105 @@ const paymentSectionController = new PaymentSectionController();
  */
 router.get("/solicitud/:solicitud_id", GestionAuth, paymentSectionController.get_payment_section_by_solicitud.bind(paymentSectionController));
 
+/**
+ * @openapi
+ * /payment-sections/{paymentSectionId}/cuenta-cobro/{vehiculoId}:
+ *   put:
+ *     tags: [PaymentSections]
+ *     summary: Actualizar cuenta de cobro de un vehículo
+ *     description: |
+ *       Actualiza el valor_base (y opcionalmente gastos) de una cuenta de cobro específica
+ *       de un vehículo dentro de una sección de pagos. Recalcula automáticamente el valor_final
+ *       y los totales de la PaymentSection.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: paymentSectionId
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la PaymentSection
+ *       - in: path
+ *         name: vehiculoId
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID del vehículo cuya cuenta de cobro se actualizará
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [solicitud_id, vehiculo_id, valor_base]
+ *             properties:
+ *               solicitud_id:
+ *                 type: string
+ *                 description: ID de la solicitud (para validación)
+ *               vehiculo_id:
+ *                 type: string
+ *                 description: ID del vehículo (debe coincidir con el parámetro de ruta)
+ *               valor_base:
+ *                 type: number
+ *                 description: Nuevo valor base a establecer (requerido, debe ser >= 0)
+ *               gastos_operacionales:
+ *                 type: number
+ *                 description: Gastos operacionales (opcional, debe ser >= 0)
+ *               gastos_preoperacionales:
+ *                 type: number
+ *                 description: Gastos preoperacionales (opcional, debe ser >= 0)
+ *     responses:
+ *       200:
+ *         description: Cuenta de cobro actualizada correctamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: PaymentSection completo actualizado
+ *                   properties:
+ *                     _id: { type: string }
+ *                     solicitud_id: { type: string }
+ *                     company_id: { type: string }
+ *                     cuentas_cobro:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           vehiculo_id: { type: object }
+ *                           placa: { type: string }
+ *                           valor_base: { type: number }
+ *                           gastos_operacionales: { type: number }
+ *                           gastos_preoperacionales: { type: number }
+ *                           valor_final: { type: number }
+ *                     total_valor_base: { type: number }
+ *                     total_gastos_operacionales: { type: number }
+ *                     total_gastos_preoperacionales: { type: number }
+ *                     total_valor_final: { type: number }
+ *       400:
+ *         description: Error de validación
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: PaymentSection o cuenta de cobro no encontrada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Error interno del servidor
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.put("/:paymentSectionId/cuenta-cobro/:vehiculoId", GestionAuth, paymentSectionController.update_cuenta_cobro.bind(paymentSectionController));
+
 export default router;
 

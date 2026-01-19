@@ -20,6 +20,8 @@ import locationsRouter from "@/routes/locations.routes";
 import bitacoraRouter from "@/routes/bitacora.routes";
 import paymentSectionRouter from "@/routes/payment_section.routes";
 import webhookRouter from "@/routes/webhook.routes";
+import facturaRouter from "@/routes/factura.routes";
+import templatesRouter from "@/routes/templates.routes";
 
 // Configuración CORS con orígenes permitidos
 const corsOptions: CorsOptions = {
@@ -104,6 +106,8 @@ app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/locations`, locationsRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/bitacoras`, bitacoraRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/payment-sections`, paymentSectionRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/webhooks`, webhookRouter);
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/facturas`, facturaRouter);
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/templates`, templatesRouter);
 
 // Manejo de rutas no encontradas (debe ir al final)
 app.use((req: Request, res: Response) => {

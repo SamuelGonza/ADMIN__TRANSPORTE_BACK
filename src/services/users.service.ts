@@ -678,7 +678,28 @@ export class UserService {
         let result = html;
         Object.keys(variables).forEach((key) => {
             const value = variables[key] || "";
-            result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
+            const placeholder = `{{${key}}}`;
+            if (result.includes(placeholder)) {
+                // Usar replace simple en lugar de regex para strings muy grandes
+                // El regex puede fallar con strings muy grandes (como imágenes base64)
+                const placeholderRegex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "g");
+                const beforeLength = result.length;
+                result = result.replace(placeholderRegex, value);
+                const afterLength = result.length;
+                
+                // Log para variables grandes (imágenes)
+                if (value.length > 10000) {
+                    console.log(`[replaceVariables] Reemplazado ${placeholder}: ${beforeLength} -> ${afterLength} caracteres (valor: ${value.length} chars)`);
+                    // Verificar que el reemplazo funcionó
+                    if (result.includes(placeholder)) {
+                        console.error(`[replaceVariables] ERROR: El placeholder ${placeholder} aún existe después del reemplazo!`);
+                        // Fallback: reemplazo directo
+                        result = result.split(placeholder).join(value);
+                    }
+                }
+            } else {
+                console.warn(`[replaceVariables] Placeholder ${placeholder} no encontrado en el template`);
+            }
         });
         return result;
     }
@@ -730,11 +751,15 @@ export class UserService {
                 direccion: (docs as any).direccion || "",
                 ciudad: (docs as any).ciudad || "",
                 email_personal: (docs as any).email_personal || "",
+
+                cedula_images: "",
+                licencia_images: "",
             });
 
             const pdfBuffer = await renderHtmlToPdfBuffer(html);
-            const safeDoc = (user as any)?.document?.number ? String((user as any).document.number) : "conductor";
-            const filename = `ficha_tecnica_conductor_${safeDoc}_${dayjs().format("YYYYMMDD_HHmm")}.pdf`;
+            const conductorName = user.full_name || 'conductor';
+            const safeName = String(conductorName).replace(/[^a-zA-Z0-9_-]/g, "_");
+            const filename = `hoja_de_vida_conductor_${safeName}.pdf`;
             return { filename, buffer: pdfBuffer };
         } catch (error) {
             if (error instanceof ResponseError) throw error;

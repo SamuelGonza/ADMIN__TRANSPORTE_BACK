@@ -833,24 +833,15 @@ export class SolicitudesController {
 
     /**
      * Generar prefactura
+     * El número de prefactura se genera automáticamente con el formato: PREF_{HE}_{NOMBRE_CLIENTE}
      */
     public async generate_prefactura(req: Request, res: Response) {
         try {
             const { id } = req.params;
-            const { prefactura_numero } = req.body;
             const user_id = (req as AuthRequest).user?._id;
-
-            if (!prefactura_numero) {
-                res.status(400).json({
-                    ok: false,
-                    message: "prefactura_numero es requerido"
-                });
-                return;
-            }
 
             const response = await this.solicitudesService.generate_prefactura({
                 solicitud_id: id,
-                prefactura_numero,
                 user_id: user_id as string
             });
 
@@ -875,22 +866,65 @@ export class SolicitudesController {
     }
 
     /**
+     * Generar prefactura para múltiples solicitudes del mismo cliente
+     * Todas las solicitudes compartirán el mismo número de prefactura
+     */
+    public async generate_prefactura_multiple(req: Request, res: Response) {
+        try {
+            const { solicitud_ids } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            if (!solicitud_ids || !Array.isArray(solicitud_ids) || solicitud_ids.length === 0) {
+                res.status(400).json({
+                    ok: false,
+                    message: "Debe proporcionar un array de IDs de solicitudes"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.generate_prefactura_multiple({
+                solicitud_ids,
+                user_id: user_id as string
+            });
+
+            res.status(200).json({
+                message: response.message || "Prefactura generada exitosamente",
+                data: response
+            });
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar prefactura múltiple"
+            });
+            return;
+        }
+    }
+
+    /**
      * Aprobar prefactura
      */
     public async approve_prefactura(req: Request, res: Response) {
         try {
             const { id } = req.params;
-            const { notas } = req.body;
+            const { notas, reenviar } = req.body;
             const user_id = (req as AuthRequest).user?._id;
 
             const response = await this.solicitudesService.approve_prefactura({
                 solicitud_id: id,
                 user_id: user_id as string,
-                notas
+                notas,
+                reenviar: reenviar === true
             });
 
             res.status(200).json({
-                message: "Prefactura aprobada exitosamente",
+                message: response.message || "Prefactura aprobada exitosamente",
                 data: response
             });
         } catch (error) {
@@ -1053,6 +1087,317 @@ export class SolicitudesController {
                 message: "Error al cambiar estado de prefactura"
             });
             return;
+        }
+    }
+
+    /**
+     * Descargar PDF de prefactura
+     */
+    public async download_prefactura_pdf(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { filename, buffer } = await this.solicitudesService.generate_prefactura_pdf({
+                solicitud_id: id
+            });
+
+            res.setHeader("Content-Type", "application/pdf");
+            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            res.status(200).send(buffer);
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar el PDF de prefactura"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Reenviar correos a los conductores asignados
+     */
+    public async resend_emails_to_drivers(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            
+            await this.solicitudesService.resend_emails_to_drivers({
+                solicitud_id: id
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: "Correos reenviados exitosamente a los conductores"
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al reenviar correos a los conductores"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Reenviar correo al cliente
+     */
+    public async resend_email_to_client(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            
+            await this.solicitudesService.resend_email_to_client({
+                solicitud_id: id
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: "Correo reenviado exitosamente al cliente"
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al reenviar correo al cliente"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Descargar plantilla Excel para gastos operacionales
+     */
+    public async download_operational_bills_template(req: Request, res: Response) {
+        try {
+            const { generateOperationalBillsTemplate } = await import('@/utils/generate-excel-template');
+            const excelBuffer = generateOperationalBillsTemplate();
+
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', 'attachment; filename="plantilla-gastos-operacionales.xlsx"');
+            res.send(excelBuffer);
+        } catch (error) {
+            console.error("Error al generar plantilla:", error);
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar plantilla Excel"
+            });
+        }
+    }
+
+    /**
+     * Subir y procesar archivo Excel con gastos operacionales
+     */
+    public async upload_operational_bills_excel(req: Request, res: Response) {
+        try {
+            const { id: solicitud_id } = req.params;
+            const excelFile = req.file;
+
+            if (!excelFile) {
+                res.status(400).json({
+                    ok: false,
+                    message: "No se proporcionó archivo Excel"
+                });
+                return;
+            }
+
+            // Validar que sea un archivo Excel
+            const validMimeTypes = [
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            ];
+            if (!validMimeTypes.includes(excelFile.mimetype)) {
+                res.status(400).json({
+                    ok: false,
+                    message: "El archivo debe ser un Excel (.xls o .xlsx)"
+                });
+                return;
+            }
+
+            const user_id = (req as AuthRequest).user?._id;
+            if (!user_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Usuario no autenticado"
+                });
+                return;
+            }
+
+            const resultado = await this.solicitudesService.process_operational_bills_excel({
+                solicitud_id,
+                excelFile,
+                user_id
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: resultado.message,
+                data: resultado
+            });
+        } catch (error) {
+            console.error("Error al procesar Excel:", error);
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al procesar archivo Excel"
+            });
+        }
+    }
+
+    /**
+     * Exportar solicitudes a Excel
+     * Puede exportar todas las solicitudes o solo las de una bitácora específica
+     */
+    public async export_solicitudes_to_excel(req: Request, res: Response) {
+        try {
+            const { bitacora_id } = req.query;
+            const filters: any = {};
+
+            // Aplicar filtros opcionales desde query params
+            if (req.query.cliente_id) filters.cliente_id = req.query.cliente_id as string;
+            if (req.query.conductor_id) filters.conductor_id = req.query.conductor_id as string;
+            if (req.query.vehiculo_id) filters.vehiculo_id = req.query.vehiculo_id as string;
+            if (req.query.status) filters.status = req.query.status as string;
+            if (req.query.service_status) filters.service_status = req.query.service_status as string;
+            if (req.query.empresa) filters.empresa = req.query.empresa as string;
+            if (req.query.fecha_inicio) filters.fecha_inicio = new Date(req.query.fecha_inicio as string);
+            if (req.query.fecha_fin) filters.fecha_fin = new Date(req.query.fecha_fin as string);
+
+            const excelBuffer = await this.solicitudesService.export_solicitudes_to_excel({
+                bitacora_id: bitacora_id as string | undefined,
+                filters
+            });
+
+            const filename = bitacora_id 
+                ? `solicitudes-bitacora-${bitacora_id}-${new Date().toISOString().split('T')[0]}.xlsx`
+                : `solicitudes-${new Date().toISOString().split('T')[0]}.xlsx`;
+
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(excelBuffer);
+        } catch (error) {
+            console.error("Error al exportar solicitudes:", error);
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al exportar solicitudes a Excel"
+            });
+        }
+    }
+
+    /**
+     * Aprobar prefactura por el cliente
+     * SOLO el cliente asociado a la solicitud puede aprobar
+     */
+    public async client_approve_prefactura(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { notas } = req.body;
+            const client_id = (req as AuthRequest).user?._id;
+
+            if (!client_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Cliente no autenticado"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.client_approve_prefactura({
+                solicitud_id: id,
+                client_id: client_id as string,
+                notas
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al aprobar prefactura"
+            });
+        }
+    }
+
+    /**
+     * Rechazar prefactura por el cliente
+     * SOLO el cliente asociado a la solicitud puede rechazar
+     */
+    public async client_reject_prefactura(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { notas } = req.body;
+            const client_id = (req as AuthRequest).user?._id;
+
+            if (!client_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Cliente no autenticado"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.client_reject_prefactura({
+                solicitud_id: id,
+                client_id: client_id as string,
+                notas
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al rechazar prefactura"
+            });
         }
     }
 }

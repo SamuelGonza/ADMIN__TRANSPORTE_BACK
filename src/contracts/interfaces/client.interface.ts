@@ -15,5 +15,9 @@ export interface Client extends Document {
     email: string;
     password: string;
 
+    // Documento de identificación
+    documento_tipo?: "NIT" | "CC" | "CE" | "PASAPORTE" | "OTRO"; // Tipo de documento
+    documento_numero?: string; // Número del documento
+
     created: Date;
 }

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Información Completa de Servicio - Admin Transporte</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f4f4;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+        .header {
+            background-color: #1a1a1a;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .logo {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        .content {
+            padding: 40px 30px;
+        }
+        .greeting {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 20px;
+        }
+        .message {
+            font-size: 16px;
+            color: #555555;
+            margin-bottom: 30px;
+            line-height: 1.8;
+        }
+        .info-box {
+            background-color: #f8f9fa;
+            border-left: 4px solid #007bff;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        .info-item {
+            margin-bottom: 15px;
+        }
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            font-weight: 600;
+            color: #333333;
+            font-size: 14px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .info-value {
+            font-size: 16px;
+            color: #555555;
+        }
+        .success-box {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        .success-text {
+            color: #155724;
+            font-weight: 600;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        .attachments-box {
+            background-color: #e7f3ff;
+            border: 2px dashed #007bff;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        .attachments-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #004085;
+            margin-bottom: 15px;
+        }
+        .attachments-list {
+            list-style: none;
+            padding: 0;
+        }
+        .attachments-list li {
+            padding: 8px 0;
+            color: #004085;
+            font-size: 14px;
+        }
+        .attachments-list li:before {
+            content: "📄 ";
+            margin-right: 8px;
+        }
+        .alert {
+            background-color: #d1ecf1;
+            border-left: 4px solid #007bff;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+            font-size: 15px;
+            color: #0c5460;
+        }
+        .footer {
+            background-color: #1a1a1a;
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+            font-size: 14px;
+        }
+        .footer-text {
+            margin-bottom: 10px;
+        }
+        .footer-link {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .footer-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <div class="logo">AdminTransporte</div>
+        </div>
+        
+        <div class="content">
+            <div class="greeting">¡Hola {{client_name}}!</div>
+            
+            <div class="success-box">
+                <div class="success-text">✓ Tu servicio está completamente asignado</div>
+                <div style="color: #155724; font-size: 14px;">
+                    Hemos asignado vehículos y conductores para tu servicio. En este correo encontrarás toda la documentación relacionada.
+                </div>
+            </div>
+            
+            <div class="message">
+                A continuación encontrarás los detalles de tu servicio y toda la documentación necesaria adjunta en este correo:
+            </div>
+            
+            <div class="info-box">
+                <div class="info-item">
+                    <div class="info-label">Fecha del Servicio</div>
+                    <div class="info-value">{{fecha}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Hora de Inicio</div>
+                    <div class="info-value">{{hora_inicio}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Origen</div>
+                    <div class="info-value">{{origen}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Destino</div>
+                    <div class="info-value">{{destino}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Número de Pasajeros</div>
+                    <div class="info-value">{{n_pasajeros}}</div>
+                </div>
+            </div>
+            
+            <div class="info-box">
+                <div class="info-label" style="margin-bottom: 15px;">Vehículos y Conductores Asignados</div>
+                <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                    <thead>
+                        <tr style="background-color: #e9ecef;">
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">#</th>
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Placa</th>
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Conductor</th>
+                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Pasajeros</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{vehiculos_table}}
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="attachments-box">
+                <div class="attachments-title">📎 Documentos Adjuntos</div>
+                <div style="margin-bottom: 15px; color: #004085; font-size: 14px;">
+                    <strong>Archivo ZIP:</strong> documentos_solicitud.zip
+                </div>
+                <div style="font-size: 13px; color: #555; margin-bottom: 10px;">
+                    El archivo ZIP contiene todos los siguientes documentos:
+                </div>
+                <ul class="attachments-list">
+                    <li>Hojas de vida de los conductores asignados</li>
+                    <li>Fichas técnicas de los vehículos asignados</li>
+                    <li>SOATs de los vehículos</li>
+                    <li>Licencias de conducción de los conductores</li>
+                    <li>Cédulas de ciudadanía de los conductores</li>
+                    <li>Licencias de tránsito de los vehículos</li>
+                    <li>Información completa de la solicitud</li>
+                </ul>
+            </div>
+            
+            <div class="alert">
+                <strong>Importante:</strong> Todos los documentos están comprimidos en un archivo ZIP adjunto (<strong>documentos_solicitud.zip</strong>). Por favor, descarga y descomprime el archivo para acceder a todos los documentos. Guarda los documentos para tus registros.
+            </div>
+            
+            <div class="message">
+                Si tienes alguna pregunta o necesitas más información sobre el servicio, no dudes en contactar con nuestro equipo de coordinación.
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div class="footer-text">
+                © {{year}} AdminTransporte. Todos los derechos reservados.
+            </div>
+            <div class="footer-text">
+                Desarrollado por <a href="https://tecnotics.com" class="footer-link">Tecnotics</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

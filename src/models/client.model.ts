@@ -14,6 +14,9 @@ const ClientSchema: Schema = new Schema<Client>({
     contacts: { type: [ClientContactSchema], required: true, default: [] }, // Múltiples contactos
     email: { type: String, required: true },
     password: { type: String, required: true },
+    // Documento de identificación
+    documento_tipo: { type: String, required: false, enum: ["NIT", "CC", "CE", "PASAPORTE", "OTRO"] },
+    documento_numero: { type: String, required: false },
     created: { type: Date, default: new Date() },
 })
 

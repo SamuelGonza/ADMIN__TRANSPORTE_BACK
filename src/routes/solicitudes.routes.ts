@@ -10,6 +10,7 @@ import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { ConductorAuth } from "@/auth/conductor.auth";
 import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
 import { OperadorContabilidadAuth } from "@/auth/operador-contabilidad.auth";
+import { upload } from "@/middlewares/multer.middleware";
 
 const router: Router = Router();
 const solicitudesController = new SolicitudesController();
@@ -815,7 +816,10 @@ router.get("/:id/verify-operationals", ContabilidadAuth, solicitudesController.v
  *     tags: [Solicitudes]
  *     summary: Generar prefactura (contabilidad)
  *     description: |
- *       Genera una prefactura para la solicitud. Requiere que:
+ *       Genera una prefactura para la solicitud. El número se genera automáticamente con el formato:
+ *       PREF_{CONSECUTIVO_SOLICITUD}_{NOMBRE_CLIENTE}
+ *       
+ *       Requiere que:
  *       - Todos los vehículos tengan operacional subido
  *       - Valores de venta y costos estén definidos
  *     security:
@@ -826,19 +830,59 @@ router.get("/:id/verify-operationals", ContabilidadAuth, solicitudesController.v
  *         required: true
  *         schema: { type: string }
  *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Prefactura generada exitosamente con número y fecha automáticos
+ */
+router.post("/:id/generate-prefactura", ContabilidadAuth, solicitudesController.generate_prefactura.bind(solicitudesController));
+
+// Generar prefactura múltiple
+/**
+ * @openapi
+ * /solicitudes/generate-prefactura-multiple:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Generar prefactura para múltiples solicitudes del mismo cliente (contabilidad)
+ *     description: |
+ *       Genera una prefactura compartida para múltiples solicitudes del mismo cliente.
+ *       Todas las solicitudes compartirán el mismo número de prefactura con el formato:
+ *       PREF_MULTI_{HE_PRIMERA}-{HE_ULTIMA}_{NOMBRE_CLIENTE}
+ *       
+ *       Requiere que:
+ *       - Todas las solicitudes pertenezcan al mismo cliente
+ *       - Todas los vehículos tengan operacional subido
+ *       - Valores de venta y costos estén definidos en todas las solicitudes
+ *       - Ninguna solicitud tenga prefactura ya generada
+ *     security:
+ *       - sessionCookie: []
+ *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [solicitud_ids]
  *             properties:
- *               prefactura_numero: { type: string, description: "Número de la prefactura" }
- *             required: [prefactura_numero]
+ *               solicitud_ids:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array de IDs de solicitudes a incluir en la prefactura
+ *                 minItems: 1
  *     responses:
  *       200:
- *         description: Prefactura generada
+ *         description: Prefactura generada exitosamente para todas las solicitudes
+ *       400:
+ *         description: Error de validación (solicitudes de diferentes clientes, ya tienen prefactura, etc.)
+ *       404:
+ *         description: Una o más solicitudes no encontradas
  */
-router.post("/:id/generate-prefactura", ContabilidadAuth, solicitudesController.generate_prefactura.bind(solicitudesController));
+router.post("/generate-prefactura-multiple", ContabilidadAuth, solicitudesController.generate_prefactura_multiple.bind(solicitudesController));
 
 // Aprobar prefactura
 /**
@@ -865,6 +909,36 @@ router.post("/:id/generate-prefactura", ContabilidadAuth, solicitudesController.
  *     responses:
  *       200:
  *         description: Prefactura aprobada
+ */
+// Aprobar prefactura
+/**
+ * @openapi
+ * /solicitudes/{id}/approve-prefactura:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Aprobar prefactura (contabilidad)
+ *     description: |
+ *       Aprueba la prefactura y automáticamente marca como "listo_para_facturacion".
+ *       Si la prefactura ya está aprobada, use reenviar=true para permitir reenvío al cliente.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notas: { type: string, description: "Notas opcionales" }
+ *               reenviar: { type: boolean, description: "Si es true y ya está aprobada, permite reenviar al cliente" }
+ *     responses:
+ *       200:
+ *         description: Prefactura aprobada o lista para reenviar
  */
 router.put("/:id/approve-prefactura", ContabilidadAuth, solicitudesController.approve_prefactura.bind(solicitudesController));
 
@@ -896,16 +970,48 @@ router.put("/:id/approve-prefactura", ContabilidadAuth, solicitudesController.ap
  */
 router.put("/:id/reject-prefactura", ContabilidadAuth, solicitudesController.reject_prefactura.bind(solicitudesController));
 
-// Marcar como lista para facturación
+// Descargar PDF de prefactura
+/**
+ * @openapi
+ * /solicitudes/{id}/prefactura-pdf:
+ *   get:
+ *     tags: [Solicitudes]
+ *     summary: Descargar PDF de prefactura
+ *     description: Descarga el PDF de la prefactura generada para una solicitud
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     responses:
+ *       200:
+ *         description: PDF de prefactura
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       400:
+ *         description: No existe prefactura generada
+ *       404:
+ *         description: Solicitud no encontrada
+ */
+router.get("/:id/prefactura-pdf", ContabilidadAuth, solicitudesController.download_prefactura_pdf.bind(solicitudesController));
+
+// Marcar como lista para facturación (DEPRECADO - Se hace automáticamente al aprobar prefactura)
 /**
  * @openapi
  * /solicitudes/{id}/mark-ready-for-billing:
  *   put:
  *     tags: [Solicitudes]
- *     summary: Marcar como lista para facturación (contabilidad)
+ *     summary: [DEPRECADO] Marcar como lista para facturación (contabilidad)
  *     description: |
- *       Marca la solicitud como lista para facturación cuando se carga en el componente de facturación.
- *       Requiere que la prefactura esté aprobada.
+ *       ⚠️ DEPRECADO: Este endpoint está deprecado. 
+ *       Al aprobar la prefactura, automáticamente se marca como "listo_para_facturacion".
+ *       Use PUT /solicitudes/{id}/approve-prefactura en su lugar.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -916,6 +1022,8 @@ router.put("/:id/reject-prefactura", ContabilidadAuth, solicitudesController.rej
  *     responses:
  *       200:
  *         description: Solicitud marcada como lista para facturación
+ *       400:
+ *         description: Endpoint deprecado - use approve-prefactura
  */
 router.put("/:id/mark-ready-for-billing", ContabilidadAuth, solicitudesController.mark_ready_for_billing.bind(solicitudesController));
 
@@ -925,10 +1033,12 @@ router.put("/:id/mark-ready-for-billing", ContabilidadAuth, solicitudesControlle
  * /solicitudes/{id}/send-prefactura-to-client:
  *   post:
  *     tags: [Solicitudes]
- *     summary: Enviar prefactura al cliente (contabilidad)
+ *     summary: Enviar o reenviar prefactura al cliente (contabilidad)
  *     description: |
- *       Acepta la prefactura y la envía al cliente. Marca el estado como "aceptada" y registra el envío en el historial.
- *       Requiere que la prefactura esté aprobada.
+ *       Genera el PDF de la prefactura y lo envía por correo al cliente.
+ *       Permite reenviar la prefactura en cualquier momento después de haberla generado.
+ *       No requiere que la prefactura esté aprobada, solo que exista una prefactura generada.
+ *       Cada envío se registra en el historial de envíos.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -936,6 +1046,7 @@ router.put("/:id/mark-ready-for-billing", ContabilidadAuth, solicitudesControlle
  *         name: id
  *         required: true
  *         schema: { type: string }
+ *         description: ID de la solicitud
  *     requestBody:
  *       required: false
  *       content:
@@ -946,9 +1057,24 @@ router.put("/:id/mark-ready-for-billing", ContabilidadAuth, solicitudesControlle
  *               notas: { type: string, description: "Notas opcionales sobre el envío" }
  *     responses:
  *       200:
- *         description: Prefactura enviada al cliente
+ *         description: Prefactura enviada al cliente exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     message: { type: string }
+ *                     solicitud: { type: object }
  *       400:
- *         description: Error de validación
+ *         description: Error de validación (prefactura no generada, cliente sin email, etc.)
+ *       404:
+ *         description: Solicitud no encontrada
+ *       500:
+ *         description: Error al generar PDF o enviar correo
  */
 router.post("/:id/send-prefactura-to-client", ContabilidadAuth, solicitudesController.send_prefactura_to_client.bind(solicitudesController));
 
@@ -986,6 +1112,326 @@ router.post("/:id/send-prefactura-to-client", ContabilidadAuth, solicitudesContr
  *         description: Error de validación
  */
 router.put("/:id/change-prefactura-status", ContabilidadAuth, solicitudesController.change_prefactura_status.bind(solicitudesController));
+
+// Reenviar correos de solicitud completa
+/**
+ * @openapi
+ * /solicitudes/{id}/resend-emails-to-drivers:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Reenviar correos a los conductores asignados
+ *     description: |
+ *       Reenvía los correos con manifiesto de pasajeros a todos los conductores asignados a la solicitud.
+ *       Solo funciona si la solicitud tiene vehículos y conductores asignados.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     responses:
+ *       200:
+ *         description: Correos reenviados exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 message: { type: string }
+ *       400:
+ *         description: Error de validación (no hay conductores asignados, sin email, etc.)
+ *       404:
+ *         description: Solicitud no encontrada
+ *       500:
+ *         description: Error al reenviar correos
+ */
+router.post("/:id/resend-emails-to-drivers", GestionAuth, solicitudesController.resend_emails_to_drivers.bind(solicitudesController));
+
+/**
+ * @openapi
+ * /solicitudes/{id}/resend-email-to-client:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Reenviar correo al cliente
+ *     description: |
+ *       Reenvía el correo al cliente con todos los documentos:
+ *       - Hojas de vida de conductores
+ *       - SOATs de vehículos
+ *       - Licencias de conducción
+ *       - Licencias de tránsito
+ *       - Fichas técnicas de vehículos
+ *       Solo funciona si la solicitud tiene vehículos y conductores asignados.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     responses:
+ *       200:
+ *         description: Correo reenviado exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 message: { type: string }
+ *       400:
+ *         description: Error de validación (no hay vehículos asignados, cliente sin email, etc.)
+ *       404:
+ *         description: Solicitud no encontrada
+ *       500:
+ *         description: Error al reenviar correo
+ */
+router.post("/:id/resend-email-to-client", GestionAuth, solicitudesController.resend_email_to_client.bind(solicitudesController));
+
+// Descargar plantilla Excel para gastos operacionales
+/**
+ * @openapi
+ * /solicitudes/operational-bills-template:
+ *   get:
+ *     tags: [Solicitudes]
+ *     summary: Descargar plantilla Excel para gastos operacionales (contabilidad)
+ *     description: |
+ *       Descarga una plantilla Excel con el formato requerido para subir gastos operacionales.
+ *       La plantilla incluye columnas: Tipo de Gasto, Valor, Descripción, Placa del Vehículo.
+ *       Incluye filas de ejemplo para referencia.
+ *     security:
+ *       - sessionCookie: []
+ *     responses:
+ *       200:
+ *         description: Archivo Excel descargado
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       500:
+ *         description: Error al generar plantilla
+ */
+router.get("/operational-bills-template", ContabilidadAuth, solicitudesController.download_operational_bills_template.bind(solicitudesController));
+
+// Subir Excel con gastos operacionales
+/**
+ * @openapi
+ * /solicitudes/{id}/operational-bills-excel:
+ *   post:
+ *     tags: [Solicitudes]
+ *     summary: Subir Excel con gastos operacionales (contabilidad)
+ *     description: |
+ *       Sube un archivo Excel con gastos operacionales de múltiples vehículos para una solicitud.
+ *       El Excel debe tener las siguientes columnas:
+ *       - Tipo de Gasto: fuel, tolls, repairs, fines, parking_lot
+ *       - Valor: número positivo
+ *       - Descripción: texto descriptivo
+ *       - Placa del Vehículo: placa del vehículo (se busca automáticamente)
+ *       
+ *       El sistema procesará automáticamente:
+ *       1. Leerá todas las filas del Excel
+ *       2. Buscará los vehículos por placa
+ *       3. Creará los registros de gastos operacionales para cada vehículo
+ *       4. Los vinculará a la solicitud
+ *       5. Recalculará automáticamente la liquidación
+ *       6. Actualizará el estado de contabilidad
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               excel:
+ *                 type: string
+ *                 format: binary
+ *                 description: Archivo Excel (.xls o .xlsx)
+ *             required: [excel]
+ *     responses:
+ *       200:
+ *         description: Excel procesado exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 message: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total_vehiculos: { type: number }
+ *                     exitosos: { type: number }
+ *                     errores: { type: number }
+ *                     detalles:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           placa: { type: string }
+ *                           vehiculo_id: { type: string }
+ *                           gastos_registrados: { type: number }
+ *                           error: { type: string }
+ *       400:
+ *         description: Error de validación (archivo inválido, formato incorrecto, etc.)
+ *       404:
+ *         description: Solicitud no encontrada
+ *       500:
+ *         description: Error al procesar Excel
+ */
+router.post(
+    "/:id/operational-bills-excel",
+    ContabilidadAuth,
+    upload.single('excel'),
+    solicitudesController.upload_operational_bills_excel.bind(solicitudesController)
+);
+
+// Exportar solicitudes a Excel
+/**
+ * @openapi
+ * /solicitudes/export/excel:
+ *   get:
+ *     tags: [Solicitudes]
+ *     summary: Exportar solicitudes a Excel
+ *     description: |
+ *       Exporta solicitudes a Excel. Puede exportar todas las solicitudes o solo las de una bitácora específica.
+ *       Incluye todos los campos de la solicitud, información del cliente (incluyendo documento), vehículos, conductores,
+ *       valores financieros, y campos de auditoría (quien creó, aprobó, asignó vehículos, etc.).
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: query
+ *         name: bitacora_id
+ *         schema: { type: string }
+ *         description: Opcional: ID de la bitácora para exportar solo sus solicitudes
+ *       - in: query
+ *         name: cliente_id
+ *         schema: { type: string }
+ *         description: Opcional: Filtrar por cliente
+ *       - in: query
+ *         name: conductor_id
+ *         schema: { type: string }
+ *         description: Opcional: Filtrar por conductor
+ *       - in: query
+ *         name: vehiculo_id
+ *         schema: { type: string }
+ *         description: Opcional: Filtrar por vehículo
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [pending, accepted, rejected] }
+ *         description: Opcional: Filtrar por estado
+ *       - in: query
+ *         name: service_status
+ *         schema: { type: string }
+ *         description: Opcional: Filtrar por estado de servicio
+ *       - in: query
+ *         name: empresa
+ *         schema: { type: string, enum: [travel, national] }
+ *         description: Opcional: Filtrar por empresa
+ *       - in: query
+ *         name: fecha_inicio
+ *         schema: { type: string, format: date }
+ *         description: Opcional: Fecha de inicio del rango
+ *       - in: query
+ *         name: fecha_fin
+ *         schema: { type: string, format: date }
+ *         description: Opcional: Fecha de fin del rango
+ *     responses:
+ *       200:
+ *         description: Archivo Excel descargado
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       500:
+ *         description: Error al exportar
+ */
+router.get("/export/excel", OperadorContabilidadAuth, solicitudesController.export_solicitudes_to_excel.bind(solicitudesController));
+
+// Aprobar prefactura por el cliente
+/**
+ * @openapi
+ * /solicitudes/{id}/client/approve-prefactura:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Aprobar prefactura (cliente)
+ *     description: |
+ *       Permite al cliente aprobar la prefactura. SOLO el cliente asociado a la solicitud puede aprobarla.
+ *       Al aprobar, automáticamente marca como "listo_para_facturacion".
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notas: { type: string, description: "Notas opcionales" }
+ *     responses:
+ *       200:
+ *         description: Prefactura aprobada exitosamente
+ *       403:
+ *         description: No tiene permiso (solo el cliente asociado puede aprobar)
+ *       404:
+ *         description: Solicitud no encontrada
+ */
+router.put("/:id/client/approve-prefactura", ClienteAuth, solicitudesController.client_approve_prefactura.bind(solicitudesController));
+
+// Rechazar prefactura por el cliente
+/**
+ * @openapi
+ * /solicitudes/{id}/client/reject-prefactura:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Rechazar prefactura (cliente)
+ *     description: |
+ *       Permite al cliente rechazar la prefactura. SOLO el cliente asociado a la solicitud puede rechazarla.
+ *       Al rechazar, vuelve a estado "operacional_completo" para que se pueda regenerar la prefactura.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notas: { type: string, description: "Notas opcionales" }
+ *     responses:
+ *       200:
+ *         description: Prefactura rechazada exitosamente
+ *       403:
+ *         description: No tiene permiso (solo el cliente asociado puede rechazar)
+ *       404:
+ *         description: Solicitud no encontrada
+ */
+router.put("/:id/client/reject-prefactura", ClienteAuth, solicitudesController.client_reject_prefactura.bind(solicitudesController));
 
 export default router;
 

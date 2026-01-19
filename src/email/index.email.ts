@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import dayjs from "dayjs";
 import nodemailer from "nodemailer";
+import archiver from "archiver";
 
 const transporter = nodemailer.createTransport({
     host: "smtp.mailgun.org",
@@ -38,11 +39,20 @@ const sendEmail = async (to: string, subject: string, html: string, attachments?
             html,
         };
         if (attachments && attachments.length > 0) {
-            mail_options.attachments = attachments;
+            // Convertir attachments al formato que nodemailer espera
+            mail_options.attachments = attachments.map(att => ({
+                filename: att.filename,
+                content: att.content,
+                contentType: att.contentType || undefined
+            }));
+            console.log(`Preparando ${attachments.length} adjunto(s) para el email`);
         }
-        await transporter.sendMail(mail_options);
+        const info = await transporter.sendMail(mail_options);
+        console.log(`Email enviado exitosamente a ${to}. MessageId: ${info.messageId || 'N/A'}`);
+        return info;
     } catch (error) {
-        console.log("Error al enviar email:", error);
+        console.error("Error al enviar email:", error);
+        throw error; // Lanzar el error para que se maneje en la función que llama
     }
 };
 
@@ -378,7 +388,8 @@ export const send_client_solicitud_complete = async ({
     solicitud_info,
     driver_cv_pdf,
     vehicle_technical_sheets_pdf,
-    solicitud_info_pdf
+    solicitud_info_pdf,
+    additional_attachments = []
 }: {
     client_name: string;
     client_email: string;
@@ -388,12 +399,12 @@ export const send_client_solicitud_complete = async ({
         origen: string;
         destino: string;
         n_pasajeros: number;
-        vehiculo_placa: string;
-        conductor_name: string;
+        vehiculos_table: string; // HTML de la tabla de vehículos y conductores
     };
-    driver_cv_pdf: { filename: string; buffer: Buffer };
+    driver_cv_pdf: Array<{ filename: string; buffer: Buffer }>; // Todos los CVs
     vehicle_technical_sheets_pdf: Array<{ filename: string; buffer: Buffer }>;
     solicitud_info_pdf: { filename: string; buffer: Buffer };
+    additional_attachments?: Array<{ filename: string; buffer: Buffer }>;
 }) => {
     try {
         const templatePath = path.join(__dirname, "templates", "cliente-solicitud-completa.html");
@@ -406,34 +417,127 @@ export const send_client_solicitud_complete = async ({
             origen: solicitud_info.origen,
             destino: solicitud_info.destino,
             n_pasajeros: solicitud_info.n_pasajeros.toString(),
-            vehiculo_placa: solicitud_info.vehiculo_placa,
-            conductor_name: solicitud_info.conductor_name,
+            vehiculos_table: solicitud_info.vehiculos_table,
             year: YEAR.toString()
         });
 
-        // Preparar adjuntos
-        const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [
+        // Validar que haya documentos para comprimir
+        const totalDocuments = driver_cv_pdf.length + vehicle_technical_sheets_pdf.length + additional_attachments.length + 1; // +1 para solicitud_info_pdf
+        if (totalDocuments === 0) {
+            throw new ResponseError(400, "No hay documentos para enviar");
+        }
+
+        // Comprimir todos los documentos en un ZIP
+        const zipBuffer = await new Promise<Buffer>((resolve, reject) => {
+            const archive = archiver('zip', {
+                zlib: { level: 9 } // Máxima compresión
+            });
+
+            const chunks: Buffer[] = [];
+            let hasError = false;
+
+            archive.on('data', (chunk: Buffer) => {
+                chunks.push(chunk);
+            });
+
+            archive.on('end', () => {
+                if (!hasError) {
+                    const finalBuffer = Buffer.concat(chunks);
+                    if (finalBuffer.length === 0) {
+                        reject(new Error("El archivo ZIP está vacío"));
+                    } else {
+                        resolve(finalBuffer);
+                    }
+                }
+            });
+
+            archive.on('error', (err) => {
+                hasError = true;
+                reject(err);
+            });
+
+            archive.on('warning', (err) => {
+                if (err.code === 'ENOENT') {
+                    console.warn("Advertencia al crear ZIP:", err);
+                } else {
+                    reject(err);
+                }
+            });
+
+            try {
+                let filesAdded = 0;
+
+                // Agregar todos los CVs de conductores
+                driver_cv_pdf.forEach(cv => {
+                    if (cv.buffer && cv.buffer.length > 0) {
+                        archive.append(cv.buffer, { name: cv.filename });
+                        filesAdded++;
+                        console.log(`Agregando al ZIP: ${cv.filename} (${cv.buffer.length} bytes)`);
+                    }
+                });
+
+                // Agregar PDF de información de solicitud
+                if (solicitud_info_pdf.buffer && solicitud_info_pdf.buffer.length > 0) {
+                    archive.append(solicitud_info_pdf.buffer, { name: solicitud_info_pdf.filename });
+                    filesAdded++;
+                    console.log(`Agregando al ZIP: ${solicitud_info_pdf.filename} (${solicitud_info_pdf.buffer.length} bytes)`);
+                }
+
+                // Agregar fichas técnicas de vehículos
+                vehicle_technical_sheets_pdf.forEach(v => {
+                    if (v.buffer && v.buffer.length > 0) {
+                        archive.append(v.buffer, { name: v.filename });
+                        filesAdded++;
+                        console.log(`Agregando al ZIP: ${v.filename} (${v.buffer.length} bytes)`);
+                    }
+                });
+
+                // Agregar documentos adicionales (SOATs, licencias, etc.)
+                additional_attachments.forEach(att => {
+                    if (att.buffer && att.buffer.length > 0) {
+                        archive.append(att.buffer, { name: att.filename });
+                        filesAdded++;
+                        console.log(`Agregando al ZIP: ${att.filename} (${att.buffer.length} bytes)`);
+                    }
+                });
+
+                console.log(`Total de archivos agregados al ZIP: ${filesAdded}`);
+                
+                if (filesAdded === 0) {
+                    reject(new Error("No se agregaron archivos al ZIP"));
+                    return;
+                }
+
+                archive.finalize();
+            } catch (err) {
+                hasError = true;
+                reject(err);
+            }
+        });
+
+        // Validar que el ZIP se haya generado correctamente
+        if (!zipBuffer || zipBuffer.length === 0) {
+            throw new ResponseError(500, "Error al generar el archivo ZIP: el archivo está vacío");
+        }
+
+        console.log(`ZIP generado exitosamente: ${zipBuffer.length} bytes (${(zipBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+
+        // Preparar adjuntos (solo el ZIP)
+        // Nodemailer acepta: { filename, content: Buffer } o { filename, raw: Buffer }
+        const attachments: Array<{ filename: string; content: Buffer }> = [
             {
-                filename: driver_cv_pdf.filename,
-                content: driver_cv_pdf.buffer,
-                contentType: "application/pdf"
-            },
-            {
-                filename: solicitud_info_pdf.filename,
-                content: solicitud_info_pdf.buffer,
-                contentType: "application/pdf"
-            },
-            ...vehicle_technical_sheets_pdf.map(v => ({
-                filename: v.filename,
-                content: v.buffer,
-                contentType: "application/pdf"
-            }))
+                filename: "documentos_solicitud.zip",
+                content: zipBuffer
+            }
         ];
 
+        console.log(`Enviando email a ${client_email} con ZIP adjunto...`);
         await sendEmail(client_email, "Información Completa de Servicio - Admin Transporte", html_final, attachments);
+        console.log(`Email enviado exitosamente a ${client_email}`);
     } catch (error) {
         if (error instanceof ResponseError) throw error;
-        console.log("Error al enviar email de solicitud completa al cliente:", error);
+        console.error("Error al enviar email de solicitud completa al cliente:", error);
+        throw new ResponseError(500, `Error al enviar email al cliente: ${error instanceof Error ? error.message : 'Error desconocido'}`);
     }
 };
 
@@ -514,5 +618,67 @@ export const send_user_password_reset_otp = async ({
     } catch (error) {
         if (error instanceof ResponseError) throw error;
         console.log("Error al enviar email de recuperación de contraseña:", error);
+    }
+};
+
+// 13. Cliente - Prefactura con PDF
+export const send_client_prefactura = async ({
+    client_name,
+    client_email,
+    company_name,
+    prefactura_numero,
+    he,
+    prefactura_pdf,
+    notas,
+    dashboard_link
+}: {
+    client_name: string;
+    client_email: string;
+    company_name: string;
+    prefactura_numero: string;
+    he: string;
+    prefactura_pdf: { filename: string; buffer: Buffer };
+    notas?: string;
+    dashboard_link?: string;
+}) => {
+    try {
+        const templatePath = path.join(__dirname, "templates", "cliente-prefactura.html");
+        const html_template = fs.readFileSync(templatePath, "utf8");
+
+        const notasSection = notas 
+            ? `<p><strong>Notas:</strong> ${notas}</p>`
+            : '';
+
+        // Si no se proporciona dashboard_link, usar un link genérico (el frontend debería configurar esto)
+        const dashboardUrl = dashboard_link || `${process.env.FRONTEND_URL || 'https://dashboard.example.com'}/prefacturas/${he}`;
+
+        const html_final = replaceVariables(html_template, {
+            client_name,
+            company_name,
+            prefactura_numero,
+            he,
+            notas_section: notasSection,
+            dashboard_link: dashboardUrl,
+            year: YEAR.toString()
+        });
+
+        // Preparar adjunto PDF
+        const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [
+            {
+                filename: prefactura_pdf.filename,
+                content: prefactura_pdf.buffer,
+                contentType: "application/pdf"
+            }
+        ];
+
+        await sendEmail(
+            client_email, 
+            `Prefactura N° ${prefactura_numero} - Servicio ${he} - Admin Transporte`, 
+            html_final, 
+            attachments
+        );
+    } catch (error) {
+        if (error instanceof ResponseError) throw error;
+        console.log("Error al enviar email de prefactura al cliente:", error);
     }
 };

@@ -114,6 +114,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     valor_a_facturar: { type: Number, required: true, default: 0 }, // VALOR A FACTURAR
     n_factura: { type: String, default: "" }, // N° FACTURA
     fecha_factura: { type: Date }, // FECHA de factura
+    factura_id: { type: MongoIdRef, ref: "Factura", required: false }, // Referencia a la colección Facturas
 
     // Utilidad
     utilidad: { type: Number, required: true, default: 0 }, // UTILIDAD (valor)
@@ -164,10 +165,33 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
         }
     },
 
-    // Metadata
+    // Metadata y Auditoría
     created: { type: Date, default: new Date() },
     created_by: { type: MongoIdRef, ref: "User" }, // Usuario que creó el registro
     last_modified_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que hizo la última modificación
+    
+    // Campos de auditoría para rastrear acciones
+    approved_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que aprobó la solicitud
+    approved_at: { type: Date, required: false }, // Fecha de aprobación
+    
+    assigned_vehicles_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que asignó vehículos/conductores
+    assigned_vehicles_at: { type: Date, required: false }, // Fecha de asignación de vehículos
+    
+    assigned_costs_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que asignó valores de costos (valor_cancelado)
+    assigned_costs_at: { type: Date, required: false }, // Fecha de asignación de costos
+    
+    assigned_sales_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que asignó valores de venta (valor_a_facturar)
+    assigned_sales_at: { type: Date, required: false }, // Fecha de asignación de ventas
+    
+    uploaded_operationals_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que subió operacionales
+    uploaded_operationals_at: { type: Date, required: false }, // Fecha de subida de operacionales
+    
+    generated_prefactura_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que generó la prefactura
+    generated_prefactura_at: { type: Date, required: false }, // Fecha de generación de prefactura
+    
+    generated_factura_by: { type: MongoIdRef, ref: "User", required: false }, // Usuario que generó la factura
+    generated_factura_at: { type: Date, required: false }, // Fecha de generación de factura
+    
     status: { type: String, required: true, enum: ["pending", "accepted", "rejected"], default: "pending" },
     service_status: { type: String, required: true, enum: ["pendiente_de_asignacion", "sin_asignacion", "not-started", "started", "finished"], default: "pendiente_de_asignacion" }
 });

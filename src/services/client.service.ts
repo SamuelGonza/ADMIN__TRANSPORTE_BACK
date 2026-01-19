@@ -242,7 +242,9 @@ export class ClientService {
                 name,
                 contacts,
                 phone,
-                email
+                email,
+                documento_tipo,
+                documento_numero
             } = payload as any;
             const find_user = await clientModel.findById(id)
             if(!find_user) throw new ResponseError(404, "El cliente no fue encontrado")
@@ -264,6 +266,16 @@ export class ClientService {
             } else if (find_user.contacts && find_user.contacts.length > 0) {
                 // Si no se proporciona phone pero hay contactos, usar el primero
                 find_user.phone = find_user.contacts[0].phone;
+            }
+            
+            // Actualizar documento_tipo si se proporciona
+            if (documento_tipo !== undefined) {
+                find_user.documento_tipo = documento_tipo;
+            }
+            
+            // Actualizar documento_numero si se proporciona
+            if (documento_numero !== undefined) {
+                find_user.documento_numero = documento_numero;
             }
             
             await find_user.save()

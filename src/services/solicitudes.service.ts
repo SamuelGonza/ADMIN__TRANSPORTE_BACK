@@ -5,7 +5,7 @@ import { UserService } from './users.service';
 import { ClientService } from "./client.service";
 import { ResponseError } from '@/utils/errors';
 import { BitacoraSolicitud } from '@/contracts/interfaces/bitacora.interface';
-import { send_coordinator_new_solicitud, send_client_solicitud_approved } from '@/email/index.email';
+import { send_coordinator_new_solicitud, send_client_solicitud_approved, send_client_prefactura } from '@/email/index.email';
 import userModel from '@/models/user.model';
 import dayjs from 'dayjs';
 import { ContractsService } from './contracts.service';
@@ -20,6 +20,11 @@ import fs from "fs";
 import path from "path";
 import { renderHtmlToPdfBuffer } from "@/utils/pdf";
 import { PaymentSectionService } from './payment_section.service';
+import paymentSectionModel from '@/models/payment_section.model';
+import vhc_documentsModel from '@/models/vhc_documents.model';
+import driver_documentsModel from '@/models/driver_documents.model';
+import axios from 'axios';
+import * as XLSX from 'xlsx';
 
 export class SolicitudesService {
     private static ClientService = new ClientService()
@@ -151,48 +156,93 @@ export class SolicitudesService {
     }
 
     /**
-     * Genera el PDF de manifiesto de pasajeros (1 vehículo).
+     * Genera el PDF de manifiesto de pasajeros para un vehículo específico.
      * - Header: empresa, placa, modelo, conductor, fecha expedición
-     * - Body: tabla con N filas = asientos del vehículo
+     * - Body: tabla con N filas = pasajeros asignados al vehículo
      * - Footer: firma del conductor
+     * - Incluye información del cliente y del servicio
      */
     public async generate_passenger_manifest_pdf({
-        solicitud_id
+        solicitud_id,
+        vehiculo_id,
+        conductor_id,
+        assigned_passengers
     }: {
         solicitud_id: string;
+        vehiculo_id?: string;
+        conductor_id?: string;
+        assigned_passengers?: number;
     }): Promise<{ filename: string; buffer: Buffer }> {
         try {
-            const solicitud = await solicitudModel.findById(solicitud_id).lean();
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('cliente', 'name contacts phone email')
+                .lean();
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Determinar vehículo y conductor
+            let vehicle: any = null;
+            let conductor: any = null;
+            let assignedPassengers = assigned_passengers;
+
+            if (vehiculo_id && conductor_id && assigned_passengers) {
+                // Caso: vehicle_assignments (múltiples vehículos)
+                vehicle = await vehicleModel
+                    .findById(vehiculo_id)
+                    .populate("owner_id.company_id", "company_name document logo")
+                    .lean();
+                if (!vehicle) throw new ResponseError(404, "Vehículo no encontrado");
+
+                conductor = await userModel
+                    .findById(conductor_id)
+                    .select("full_name document contact")
+                    .lean();
+                if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+            } else {
+                // Caso: vehículo y conductor individuales (compatibilidad)
             if (!(solicitud as any).vehiculo_id) throw new ResponseError(400, "La solicitud no tiene vehículo asignado");
             if (!(solicitud as any).conductor) throw new ResponseError(400, "La solicitud no tiene conductor asignado");
 
-            // Vehículo con ficha y propietario
-            const vehicle = await vehicleModel
+                vehicle = await vehicleModel
                 .findById((solicitud as any).vehiculo_id)
                 .populate("owner_id.company_id", "company_name document logo")
                 .lean();
             if (!vehicle) throw new ResponseError(404, "Vehículo no encontrado");
 
+                conductor = await userModel
+                    .findById((solicitud as any).conductor)
+                    .select("full_name document contact")
+                    .lean();
+                if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+
+                assignedPassengers = (solicitud as any).n_pasajeros || (vehicle as any).seats || 0;
+            }
+
             // Empresa transportadora: preferir owner_id.company_id; si no, fallback a empresa del cliente
             let company: any = (vehicle as any).owner_id?.company_id || null;
             if (!company) {
-                const client = await SolicitudesService.ClientService.get_client_by_id({ id: String((solicitud as any).cliente) });
+                const client = (solicitud as any).cliente;
+                if (client && (client as any).company_id) {
                 company = await companyModel.findById(String((client as any).company_id)).lean();
+                }
             }
             if (!company) throw new ResponseError(404, "No se pudo obtener la empresa transportadora");
 
-            // Conductor
-            const conductor = await userModel
-                .findById((solicitud as any).conductor)
-                .select("full_name document contact")
-                .lean();
-            if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+            // Información del cliente
+            const client = (solicitud as any).cliente;
+            const clienteName = client?.name || 'N/A';
+            const contactoName = (client?.contacts && Array.isArray(client.contacts) && client.contacts.length > 0)
+                ? client.contacts[0].name
+                : (solicitud as any).contacto || 'N/A';
+            const contactoPhone = (client?.contacts && Array.isArray(client.contacts) && client.contacts.length > 0)
+                ? client.contacts[0].phone
+                : (solicitud as any).contacto_phone || 'N/A';
 
-            const seats = Number((vehicle as any).seats || 0);
-            if (!seats || seats <= 0) throw new ResponseError(400, "El vehículo no tiene asientos definidos");
-
-            const rowsHtml = Array.from({ length: seats }, (_, idx) => {
+            // Generar filas según pasajeros asignados
+            const assignedPassengersCount = assignedPassengers || 0;
+            if (assignedPassengersCount <= 0) {
+                throw new ResponseError(400, "El número de pasajeros asignados debe ser mayor a 0");
+            }
+            const rowsHtml = Array.from({ length: assignedPassengersCount }, (_, idx) => {
                 const i = idx + 1;
                 return `<tr>
   <td class="idx">${i}</td>
@@ -210,6 +260,13 @@ export class SolicitudesService {
                 ? `${company.document.number}${company.document.dv ? "-" + company.document.dv : ""}`
                 : "";
 
+            // Formatear fechas del servicio
+            const fechaInicio = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+            const fechaFinal = dayjs((solicitud as any).fecha_final).format('DD/MM/YYYY');
+            const horaInicio = (solicitud as any).hora_inicio || 'N/A';
+            const origen = (solicitud as any).origen || 'N/A';
+            const destino = (solicitud as any).destino || 'N/A';
+
             const htmlTemplate = fs.readFileSync(this.resolveTemplatePath("manifiesto-pasajeros.html"), "utf8");
             const html = this.replaceVariables(htmlTemplate, {
                 fecha_expedicion: fechaExpedicion,
@@ -219,10 +276,18 @@ export class SolicitudesService {
                 vehiculo_placa: (vehicle as any).placa || "",
                 vehiculo_interno: interno || "",
                 vehiculo_modelo: String(modelo),
-                vehiculo_seats: String(seats),
+                assigned_passengers: String(assignedPassengersCount),
                 conductor_nombre: conductor.full_name || "",
                 conductor_documento: conductor?.document?.number ? String(conductor.document.number) : "",
                 conductor_telefono: conductor?.contact?.phone || "",
+                cliente_name: clienteName,
+                contacto_name: contactoName,
+                contacto_phone: contactoPhone,
+                fecha_inicio: fechaInicio,
+                fecha_final: fechaFinal,
+                hora_inicio: horaInicio,
+                origen: origen,
+                destino: destino,
                 rows: rowsHtml,
             });
 
@@ -345,9 +410,9 @@ export class SolicitudesService {
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
 
             // Obtener o crear bitácora automáticamente basada en el MES/AÑO ACTUAL (no la fecha del servicio)
-            const client_company_id = typeof client.company_id === 'object' 
-                ? (client.company_id as any)._id || client.company_id
-                : client.company_id;
+                const client_company_id = typeof client.company_id === 'object' 
+                    ? (client.company_id as any)._id || client.company_id
+                    : client.company_id;
             
             // Normalizar a string para uso consistente
             const client_company_id_str = String(client_company_id);
@@ -357,7 +422,7 @@ export class SolicitudesService {
             const bitacora_id = await this.get_or_create_bitacora({
                 company_id: client_company_id_str,
                 fecha: fechaActualParaBitacora
-            });
+                });
 
             const loc = await this.resolve_locations({
                 company_id: client_company_id_str,
@@ -445,7 +510,7 @@ export class SolicitudesService {
                     await send_coordinator_new_solicitud({
                         coordinator_name: coordinator.full_name,
                         coordinator_email: coordinator.email,
-                        client_name: (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name,
+                        client_name: client.name, // Nombre del cliente, no del contacto
                         fecha: fecha_formatted,
                         hora_inicio: payload.hora_inicio,
                         origen: payload.origen,
@@ -648,26 +713,26 @@ export class SolicitudesService {
                 }
             } else {
                 // Comportamiento tradicional: un solo vehículo
-                const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
-                    placa: payload.placa,
+            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                placa: payload.placa,
                     company_id: client_company_id_str
-                });
+            });
 
-                // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
-                const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
-                const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
-                    ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
-                    : [];
-                const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
+            // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
+            const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
+            const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
+                ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
+                : [];
+            const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
 
-                const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
-                if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
-                if (!allowed_driver_ids.has(target_driver_id)) {
-                    throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
-                }
+            const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
+            if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
+            if (!allowed_driver_ids.has(target_driver_id)) {
+                throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
+            }
 
-                const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
-                if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
+            if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
 
                 primary_vehicle = vehicleData.vehicle;
                 primary_conductor = conductor;
@@ -827,7 +892,7 @@ export class SolicitudesService {
                 // El contrato ya fue validado arriba en contract_validated
                 
                 const amount = payload.contract_charge_amount || 0;
-                
+
                 // Cargar al contrato (incluso si amount es 0, para registrar el consumo del servicio)
                 // Nota: charge_contract requiere amount > 0, así que solo cargamos si hay monto
                 // Si no hay monto, el consumo se registrará cuando el comercial establezca valor_a_facturar
@@ -841,7 +906,7 @@ export class SolicitudesService {
                         notes: `Cargo automático por solicitud ${new_solicitud.he || new_solicitud._id.toString()}`
                     });
                 }
-                
+
                 // Asegurar que la información del contrato esté guardada en la solicitud
                 new_solicitud.contract_id = payload.contract_id as any;
                 new_solicitud.contract_charge_mode = "within_contract" as any;
@@ -1000,26 +1065,26 @@ export class SolicitudesService {
                 }
             } else {
                 // Comportamiento tradicional: un solo vehículo
-                const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
-                    placa: payload.placa,
-                    company_id 
-                });
+            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+                placa: payload.placa,
+                company_id 
+            });
 
-                // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
-                const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
-                const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
-                    ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
-                    : [];
-                const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
+            // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
+            const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
+            const possible_ids: string[] = Array.isArray((vehicleData.vehicle as any).possible_drivers)
+                ? (vehicleData.vehicle as any).possible_drivers.map((d: any) => (d?._id ? String(d._id) : String(d)))
+                : [];
+            const allowed_driver_ids = new Set<string>([vehicle_main_driver_id, ...possible_ids].filter(Boolean));
 
-                const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
-                if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
-                if (!allowed_driver_ids.has(target_driver_id)) {
-                    throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
-                }
+            const target_driver_id = payload.conductor_id ? String(payload.conductor_id) : vehicle_main_driver_id;
+            if (!target_driver_id) throw new ResponseError(400, "El vehículo no tiene conductor asignado");
+            if (!allowed_driver_ids.has(target_driver_id)) {
+                throw new ResponseError(400, "El conductor seleccionado no está asociado a este vehículo");
+            }
 
-                const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
-                if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
+            const conductor = await SolicitudesService.UserService.get_user_by_id({ id: target_driver_id });
+            if (!conductor) throw new ResponseError(404, "Conductor no encontrado");
 
                 primary_vehicle = vehicleData.vehicle;
                 primary_conductor = conductor;
@@ -1074,8 +1139,8 @@ export class SolicitudesService {
 
             // Contrato - guardar información si está presente
             if (payload.contract_id) {
-                solicitud.contract_id = payload.contract_id as any;
-                solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
+            solicitud.contract_id = payload.contract_id as any;
+            solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
                 solicitud.contract_charge_amount = (payload.contract_charge_amount || 0) as any;
             }
 
@@ -1102,8 +1167,12 @@ export class SolicitudesService {
                 solicitud.service_status = "not-started";
             }
 
-            // Guardar quién hizo la última modificación
+            // Guardar auditoría
             if (accepted_by) {
+                (solicitud as any).approved_by = accepted_by;
+                (solicitud as any).approved_at = new Date();
+                (solicitud as any).assigned_vehicles_by = accepted_by;
+                (solicitud as any).assigned_vehicles_at = new Date();
                 (solicitud as any).last_modified_by = accepted_by;
             }
 
@@ -1198,7 +1267,7 @@ export class SolicitudesService {
                         notes: `Cargo automático por aceptación de solicitud ${solicitud.he || solicitud._id.toString()}`
                     });
                 }
-                
+
                 // Asegurar que la información del contrato esté guardada en la solicitud
                 solicitud.contract_id = payload.contract_id as any;
                 solicitud.contract_charge_mode = "within_contract" as any;
@@ -1401,21 +1470,79 @@ export class SolicitudesService {
                 throw new ResponseError(400, "fecha y hora_inicio son requeridos");
             }
 
-            // Buscar todos los vehículos de la compañía (propios, afiliados, externos)
-            const vehicleQuery: any = {
-                $or: [
-                    { "owner_id.type": "Company", "owner_id.company_id": company_id },
-                    { "owner_id.type": "User", "owner_id.company_id": company_id },
-                ]
+            // Función para normalizar IDs
+            const normalizeId = (id: any): string | null => {
+                if (!id) return null;
+                if (typeof id === 'string') return id;
+                return String(id._id || id);
             };
+
+            const targetCompanyId = String(company_id);
+
+            // Buscar TODOS los vehículos (sin filtrar por company_id inicialmente)
+            // Luego filtraremos según la lógica de flota
+            const vehicleQuery: any = {};
             if (vehicle_type) vehicleQuery.type = vehicle_type;
 
-            const vehicles = await vehicleModel
+            const allVehicles = await vehicleModel
                 .find(vehicleQuery)
                 .select("_id placa seats type flota driver_id possible_drivers n_numero_interno owner_id")
-                .populate("driver_id", "full_name contact.phone")
-                .populate("possible_drivers", "full_name contact.phone")
+                .populate("driver_id", "full_name contact.phone company_id")
+                .populate("possible_drivers", "full_name contact.phone company_id")
+                .populate("owner_id.user_id", "company_id")
                 .lean();
+
+            // Filtrar vehículos según la lógica de flota (propios, afiliados, externos)
+            const vehicles = allVehicles.filter((vehicle: any) => {
+                // 1. Vehículos propios: owner_id.company_id coincide
+                const ownerCompanyId = normalizeId(vehicle.owner_id?.company_id);
+                if (ownerCompanyId === targetCompanyId) {
+                    return true;
+                }
+
+                // 2. Vehículos de usuarios: verificar si el usuario tiene company_id que coincide
+                if (vehicle.owner_id?.type === "User" && vehicle.owner_id?.user_id) {
+                    const userId = vehicle.owner_id.user_id;
+                    // Si el usuario tiene company_id poblado, verificar
+                    if (userId.company_id) {
+                        const userCompanyId = normalizeId(userId.company_id);
+                        if (userCompanyId === targetCompanyId) {
+                            return true;
+                        }
+                    }
+                }
+
+                // 3. Vehículos afiliados: verificar que el conductor pertenezca a la compañía
+                if (vehicle.flota === "afiliado") {
+                    if (vehicle.driver_id) {
+                        const driverCompanyId = normalizeId(vehicle.driver_id?.company_id);
+                        if (driverCompanyId === targetCompanyId) {
+                            return true;
+                        }
+                    }
+                    // Si el vehículo es afiliado pero no tiene conductor o el conductor no tiene company_id,
+                    // también verificar si alguno de los possible_drivers tiene el company_id correcto
+                    if (vehicle.possible_drivers && Array.isArray(vehicle.possible_drivers) && vehicle.possible_drivers.length > 0) {
+                        const hasDriverWithCompany = vehicle.possible_drivers.some((driver: any) => {
+                            const driverCompanyId = normalizeId(driver?.company_id);
+                            return driverCompanyId === targetCompanyId;
+                        });
+                        if (hasDriverWithCompany) {
+                            return true;
+                        }
+                    }
+                }
+
+                // 4. Vehículos externos: si el conductor pertenece a la compañía
+                if (vehicle.flota === "externo") {
+                    const driverCompanyId = normalizeId(vehicle.driver_id?.company_id);
+                    if (driverCompanyId === targetCompanyId) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
 
             if (!vehicles || vehicles.length === 0) {
                 throw new ResponseError(404, "No hay vehículos disponibles");
@@ -1434,12 +1561,16 @@ export class SolicitudesService {
             };
 
             const horaInicioMinutos = horaAMinutos(hora_inicio);
+            // Estimar hora final mínima (asumir al menos 1 hora de servicio)
+            // Esto es conservador para detectar conflictos
+            const horaFinMinimaEstimada = horaInicioMinutos + 60; // Mínimo 1 hora
 
-            // Verificar disponibilidad de cada vehículo
+            // Verificar disponibilidad de cada vehículo y conductor
             const vehiclesWithAvailability = await Promise.all(
                 vehicles.map(async (vehicle: any) => {
                     // Buscar solicitudes activas para este vehículo en la fecha
                     // Considerar tanto vehiculo_id principal como vehicle_assignments
+                    // Incluir solo solicitudes pending o accepted (no rejected)
                     const solicitudesActivas = await solicitudModel.find({
                         $or: [
                             { vehiculo_id: vehicle._id },
@@ -1449,15 +1580,49 @@ export class SolicitudesService {
                             $gte: fechaComparacion,
                             $lte: fechaFinComparacion
                         },
-                        status: { $ne: "rejected" }, // No considerar rechazadas
+                        status: { $in: ["pending", "accepted"] }, // Solo pending o accepted
                         service_status: { $ne: "finished" } // No considerar finalizadas
-                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments").lean();
+                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor").lean();
+
+                    // También buscar por conductor para validar disponibilidad del conductor
+                    const conductorIds = [
+                        vehicle.driver_id?._id || vehicle.driver_id,
+                        ...(vehicle.possible_drivers || []).map((d: any) => d._id || d).filter(Boolean)
+                    ].filter(Boolean);
+
+                    const solicitudesConductor = conductorIds.length > 0 ? await solicitudModel.find({
+                        $or: [
+                            { conductor: { $in: conductorIds } },
+                            { "vehicle_assignments.conductor_id": { $in: conductorIds } }
+                        ],
+                        fecha: {
+                            $gte: fechaComparacion,
+                            $lte: fechaFinComparacion
+                        },
+                        status: { $in: ["pending", "accepted"] },
+                        service_status: { $ne: "finished" }
+                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor").lean() : [];
+
+                    // Combinar ambas búsquedas y eliminar duplicados
+                    const todasLasSolicitudes = [...solicitudesActivas, ...solicitudesConductor];
+                    const solicitudesUnicas = todasLasSolicitudes.filter((sol, index, self) => 
+                        index === self.findIndex((s) => String(s._id) === String(sol._id))
+                    );
 
                     let isInService = false;
                     let conflictingService: any = null;
+                    let isDriverBusy = false;
+                    let conflictingDriverService: any = null;
 
-                    // Verificar si hay solapamiento de horarios
-                    for (const solicitud of solicitudesActivas) {
+                    // Verificar si hay solapamiento de horarios para el vehículo
+                    for (const solicitud of solicitudesUnicas) {
+                        // Verificar si esta solicitud afecta a este vehículo
+                        const afectaVehiculo = String(solicitud.vehiculo_id) === String(vehicle._id) ||
+                            (solicitud.vehicle_assignments && Array.isArray(solicitud.vehicle_assignments) &&
+                                solicitud.vehicle_assignments.some((va: any) => String(va.vehiculo_id) === String(vehicle._id)));
+
+                        if (!afectaVehiculo) continue;
+
                         const solHoraInicio = horaAMinutos(solicitud.hora_inicio || "00:00");
                         let solHoraFin: number;
                         let horaFinalStr: string;
@@ -1475,8 +1640,17 @@ export class SolicitudesService {
                             horaFinalStr = `${horasFin.toString().padStart(2, '0')}:${minutosFin.toString().padStart(2, '0')}`;
                         }
 
-                        // Si la hora solicitada está dentro del rango del servicio existente
-                        if (horaInicioMinutos >= solHoraInicio && horaInicioMinutos < solHoraFin) {
+                        // Verificar solapamiento completo: 
+                        // - Si la hora de inicio nueva está dentro del rango existente
+                        // - Si la hora de inicio existente está dentro del rango nuevo (estimado)
+                        // - Si hay cualquier solapamiento entre los rangos
+                        const haySolapamiento = (
+                            (horaInicioMinutos >= solHoraInicio && horaInicioMinutos < solHoraFin) ||
+                            (solHoraInicio >= horaInicioMinutos && solHoraInicio < horaFinMinimaEstimada) ||
+                            (horaInicioMinutos < solHoraInicio && horaFinMinimaEstimada > solHoraInicio)
+                        );
+
+                        if (haySolapamiento) {
                             isInService = true;
                             conflictingService = {
                                 hora_inicio: solicitud.hora_inicio,
@@ -1486,6 +1660,51 @@ export class SolicitudesService {
                             break;
                         }
                     }
+
+                    // Verificar disponibilidad del conductor principal
+                    if (vehicle.driver_id && !isInService) {
+                        const driverId = normalizeId(vehicle.driver_id._id || vehicle.driver_id);
+                        for (const solicitud of solicitudesUnicas) {
+                            const solicitudConductorId = normalizeId(solicitud.conductor);
+                            const solicitudConductoresAsignados = solicitud.vehicle_assignments?.map((va: any) => normalizeId(va.conductor_id)).filter(Boolean) || [];
+
+                            if (solicitudConductorId === driverId || solicitudConductoresAsignados.includes(driverId)) {
+                                const solHoraInicio = horaAMinutos(solicitud.hora_inicio || "00:00");
+                                let solHoraFin: number;
+                                let horaFinalStr: string;
+
+                                if (solicitud.hora_final && solicitud.hora_final.trim() !== "") {
+                                    solHoraFin = horaAMinutos(solicitud.hora_final);
+                                    horaFinalStr = solicitud.hora_final;
+                                } else {
+                                    const solTotalHoras = solicitud.total_horas || 0;
+                                    solHoraFin = solHoraInicio + (solTotalHoras * 60);
+                                    const horasFin = Math.floor(solHoraFin / 60);
+                                    const minutosFin = solHoraFin % 60;
+                                    horaFinalStr = `${horasFin.toString().padStart(2, '0')}:${minutosFin.toString().padStart(2, '0')}`;
+                                }
+
+                                const haySolapamiento = (
+                                    (horaInicioMinutos >= solHoraInicio && horaInicioMinutos < solHoraFin) ||
+                                    (solHoraInicio >= horaInicioMinutos && solHoraInicio < horaFinMinimaEstimada) ||
+                                    (horaInicioMinutos < solHoraInicio && horaFinMinimaEstimada > solHoraInicio)
+                                );
+
+                                if (haySolapamiento) {
+                                    isDriverBusy = true;
+                                    conflictingDriverService = {
+                                        hora_inicio: solicitud.hora_inicio,
+                                        hora_final: horaFinalStr,
+                                        fecha: solicitud.fecha
+                                    };
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // El vehículo está disponible solo si no está en servicio Y el conductor no está ocupado
+                    const isAvailable = !isInService && !isDriverBusy;
 
                     // Determinar prioridad de flota (propio > afiliado > externo)
                     const flotaPriority = vehicle.flota === "propio" ? 3 : 
@@ -1501,14 +1720,15 @@ export class SolicitudesService {
                             flota: vehicle.flota
                         },
                         seats: Number(vehicle.seats || 0),
-                        is_available: !isInService,
-                        is_in_service: isInService,
-                        conflicting_service: conflictingService,
+                        is_available: isAvailable,
+                        is_in_service: isInService || isDriverBusy,
+                        conflicting_service: conflictingService || conflictingDriverService,
                         flota_priority: flotaPriority,
                         driver: vehicle.driver_id ? {
                             _id: String((vehicle.driver_id as any)._id || vehicle.driver_id),
                             full_name: (vehicle.driver_id as any).full_name || "",
-                            phone: (vehicle.driver_id as any).contact?.phone || ""
+                            phone: (vehicle.driver_id as any).contact?.phone || "",
+                            is_busy: isDriverBusy
                         } : null,
                         possible_drivers: Array.isArray(vehicle.possible_drivers) 
                             ? vehicle.possible_drivers
@@ -1584,7 +1804,9 @@ export class SolicitudesService {
                     is_available: false,
                     is_in_service: true,
                     conflicting_service: v.conflicting_service,
-                    message: `Este vehículo está en servicio el ${new Date(v.conflicting_service?.fecha || fecha).toLocaleDateString('es-ES')} de ${v.conflicting_service?.hora_inicio} a ${v.conflicting_service?.hora_final}. Puedes seleccionarlo para una fecha u hora posterior.`,
+                    message: v.driver?.is_busy 
+                        ? `El conductor ${v.driver.full_name} está ocupado el ${new Date(v.conflicting_service?.fecha || fecha).toLocaleDateString('es-ES')} de ${v.conflicting_service?.hora_inicio} a ${v.conflicting_service?.hora_final}. Puedes seleccionar otro conductor o una fecha u hora posterior.`
+                        : `Este vehículo está en servicio el ${new Date(v.conflicting_service?.fecha || fecha).toLocaleDateString('es-ES')} de ${v.conflicting_service?.hora_inicio} a ${v.conflicting_service?.hora_final}. Puedes seleccionarlo para una fecha u hora posterior.`,
                     driver: v.driver,
                     possible_drivers: v.possible_drivers
                 }))
@@ -2022,8 +2244,13 @@ export class SolicitudesService {
                 throw new ResponseError(400, "El servicio debe estar iniciado para poder finalizarlo");
             }
 
-            // Calcular total de horas (simplificado - puedes mejorar esto)
-            const total_horas = this.calculate_hours(solicitud.hora_inicio, payload.hora_final);
+            // Calcular total de horas considerando fecha y fecha_final
+            const total_horas = this.calculate_hours(
+                solicitud.fecha,
+                solicitud.hora_inicio,
+                solicitud.fecha_final,
+                payload.hora_final
+            );
 
             solicitud.hora_final = payload.hora_final;
             solicitud.total_horas = total_horas;
@@ -2175,6 +2402,11 @@ export class SolicitudesService {
             // Actualizar valor de venta
             solicitud.valor_a_facturar = payload.valor_a_facturar;
 
+            // Guardar auditoría
+            (solicitud as any).assigned_sales_by = comercial_id;
+            (solicitud as any).assigned_sales_at = new Date();
+            (solicitud as any).last_modified_by = comercial_id;
+
             // Calcular utilidad automáticamente si ya hay costos establecidos
             const total_gastos = (solicitud.total_gastos_operacionales || 0);
             const valor_cancelado = solicitud.valor_cancelado || 0;
@@ -2185,9 +2417,6 @@ export class SolicitudesService {
 
             solicitud.utilidad = utilidad;
             solicitud.porcentaje_utilidad = porcentaje_utilidad;
-
-            // Guardar quién hizo la última modificación
-            (solicitud as any).last_modified_by = comercial_id;
 
             await solicitud.save();
 
@@ -2256,6 +2485,11 @@ export class SolicitudesService {
 
             // Actualizar valor de costos
             solicitud.valor_cancelado = payload.valor_cancelado;
+
+            // Guardar auditoría
+            (solicitud as any).assigned_costs_by = operador_id;
+            (solicitud as any).assigned_costs_at = new Date();
+            (solicitud as any).last_modified_by = operador_id;
 
             // Calcular utilidad automáticamente si ya hay valores de venta establecidos
             const total_gastos = (solicitud.total_gastos_operacionales || 0);
@@ -2416,6 +2650,19 @@ export class SolicitudesService {
                 }];
             }
 
+            // Calcular valor_cancelado desde PaymentSection si existe
+            // Solo si el usuario puede ver costos (no coordinador_comercial)
+            if (user_role !== "coordinador_comercial") {
+                const paymentSection = await paymentSectionModel.findOne({ solicitud_id: id }).lean();
+                if (paymentSection) {
+                    // Calcular valor_cancelado como total_valor_base de la PaymentSection
+                    sol.valor_cancelado = paymentSection.total_valor_base || 0;
+                } else {
+                    // Si no existe PaymentSection, mantener el valor actual o establecer 0
+                    sol.valor_cancelado = sol.valor_cancelado || 0;
+                }
+            }
+
             // Aplicar permisos de visualización según el rol
             if (user_role === "coordinador_comercial") {
                 // Coordinador comercial: no ve costos
@@ -2489,17 +2736,41 @@ export class SolicitudesService {
                 .find(query)
                 .populate('cliente', 'name email contacts phone')
                 .populate('vehiculo_id', 'placa type flota seats')
-                .populate('conductor', 'name phone email')
+                .populate('conductor', 'full_name contact email')
                 .populate('vehicle_assignments.vehiculo_id', 'placa type flota seats')
-                .populate('vehicle_assignments.conductor_id', 'name phone email')
+                .populate('vehicle_assignments.conductor_id', 'full_name contact email')
                 .sort({ created: -1 })
                 .skip(skip)
                 .limit(limit)
                 .lean();
 
+            // Obtener todas las PaymentSections para las solicitudes de una vez (solo si el usuario puede ver costos)
+            const paymentSectionsMap = new Map<string, number>();
+            if (user_role !== "coordinador_comercial") {
+                const solicitudIds = solicitudes.map((s: any) => s._id.toString());
+                const paymentSections = await paymentSectionModel.find({
+                    solicitud_id: { $in: solicitudIds }
+                }).select('solicitud_id total_valor_base').lean();
+                
+                paymentSections.forEach((ps: any) => {
+                    paymentSectionsMap.set(ps.solicitud_id.toString(), ps.total_valor_base || 0);
+                });
+            }
+
             // Transformar solicitudes: si vehicle_assignments está vacío pero hay datos individuales, crear vehicle_assignments
             for (const solicitud of solicitudes) {
                 const sol = solicitud as any;
+                
+                // Calcular valor_cancelado desde PaymentSection si existe
+                if (user_role !== "coordinador_comercial") {
+                    const valorCancelado = paymentSectionsMap.get(sol._id.toString());
+                    if (valorCancelado !== undefined) {
+                        sol.valor_cancelado = valorCancelado;
+                    } else {
+                        // Si no existe PaymentSection, mantener el valor actual o establecer 0
+                        sol.valor_cancelado = sol.valor_cancelado || 0;
+                    }
+                }
                 
                 // Si vehicle_assignments está vacío o no existe, pero hay datos en campos individuales
                 if ((!sol.vehicle_assignments || sol.vehicle_assignments.length === 0) && sol.vehiculo_id) {
@@ -2509,25 +2780,60 @@ export class SolicitudesService {
                         placa: sol.placa || (sol.vehiculo_id?.placa),
                         seats: (sol.vehiculo_id as any)?.seats || sol.n_pasajeros || 0,
                         assigned_passengers: sol.n_pasajeros || 0,
-                        conductor_id: sol.conductor || null,
-                        conductor_phone: sol.conductor_phone || (sol.conductor?.phone) || "",
+                        conductor_id: sol.conductor ? {
+                            _id: sol.conductor._id || sol.conductor,
+                            full_name: sol.conductor.full_name || sol.conductor.name || "",
+                            email: sol.conductor.email || "",
+                            phone: sol.conductor.contact?.phone || sol.conductor.phone || sol.conductor_phone || ""
+                        } : null,
                         contract_id: sol.contract_id || null,
                         contract_charge_mode: sol.contract_charge_mode || "no_contract",
                         contract_charge_amount: sol.contract_charge_amount || 0,
                         accounting: sol.vehicle_assignments?.[0]?.accounting || {}
                     }];
+                    
+                    // Eliminar campos duplicados del nivel superior después de crear vehicle_assignments
+                    delete sol.placa;
+                    delete sol.flota;
+                    delete sol.conductor;
+                    delete sol.conductor_phone;
+                    delete sol.vehiculo_id;
+                    delete sol.tipo_vehiculo;
                 } else if (sol.vehicle_assignments && sol.vehicle_assignments.length > 0) {
                     // Asegurar que los campos populados estén correctamente estructurados
                     for (const assignment of sol.vehicle_assignments) {
+                        // Eliminar conductor_phone duplicado si existe
+                        delete assignment.conductor_phone;
                         if (assignment.vehiculo_id && typeof assignment.vehiculo_id === 'object') {
                             // Ya está populado, no hacer nada
                         } else if (assignment.vehiculo_id) {
                             // Si es solo un ID, mantenerlo (ya se populó arriba)
                         }
                         if (assignment.conductor_id && typeof assignment.conductor_id === 'object') {
-                            // Ya está populado, no hacer nada
+                            // Asegurar que el conductor tenga full_name correctamente estructurado
+                            if (!assignment.conductor_id.full_name && assignment.conductor_id.name) {
+                                assignment.conductor_id.full_name = assignment.conductor_id.name;
+                            }
+                            // Asegurar que phone esté presente en conductor_id (extraer de contact.phone)
+                            if (!assignment.conductor_id.phone) {
+                                if (assignment.conductor_id.contact?.phone) {
+                                    assignment.conductor_id.phone = assignment.conductor_id.contact.phone;
+                                } else if (assignment.conductor_phone) {
+                                    assignment.conductor_id.phone = assignment.conductor_phone;
+                                }
+                            }
+                            // Eliminar conductor_phone duplicado
+                            delete assignment.conductor_phone;
                         }
                     }
+                    
+                    // Eliminar campos duplicados del nivel superior cuando hay vehicle_assignments
+                    delete sol.placa;
+                    delete sol.flota;
+                    delete sol.conductor;
+                    delete sol.conductor_phone;
+                    delete sol.vehiculo_id;
+                    delete sol.tipo_vehiculo;
                 }
             }
 
@@ -2705,11 +3011,74 @@ export class SolicitudesService {
             const solicitudes = await solicitudModel
                 .find(query)
                 .populate('vehiculo_id', 'placa type flota seats name')
-                .populate('conductor', 'full_name contact')
+                .populate('conductor', 'full_name contact email')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type flota seats')
+                .populate('vehicle_assignments.conductor_id', 'full_name contact email')
                 .sort({ created: -1 })
                 .skip(skip)
                 .limit(limit)
                 .lean();
+
+            // Transformar solicitudes: eliminar campos duplicados y estructurar correctamente
+            for (const solicitud of solicitudes) {
+                const sol = solicitud as any;
+                
+                // Si vehicle_assignments está vacío o no existe, pero hay datos en campos individuales
+                if ((!sol.vehicle_assignments || sol.vehicle_assignments.length === 0) && sol.vehiculo_id) {
+                    // Crear vehicle_assignments desde los campos individuales
+                    sol.vehicle_assignments = [{
+                        vehiculo_id: sol.vehiculo_id,
+                        placa: sol.placa || (sol.vehiculo_id?.placa),
+                        seats: (sol.vehiculo_id as any)?.seats || sol.n_pasajeros || 0,
+                        assigned_passengers: sol.n_pasajeros || 0,
+                        conductor_id: sol.conductor ? {
+                            _id: sol.conductor._id || sol.conductor,
+                            full_name: sol.conductor.full_name || sol.conductor.name || "",
+                            email: sol.conductor.email || "",
+                            phone: sol.conductor.contact?.phone || sol.conductor.phone || sol.conductor_phone || ""
+                        } : null,
+                        contract_id: sol.contract_id || null,
+                        contract_charge_mode: sol.contract_charge_mode || "no_contract",
+                        contract_charge_amount: sol.contract_charge_amount || 0,
+                        accounting: sol.vehicle_assignments?.[0]?.accounting || {}
+                    }];
+                    
+                    // Eliminar campos duplicados del nivel superior después de crear vehicle_assignments
+                    delete sol.placa;
+                    delete sol.flota;
+                    delete sol.conductor;
+                    delete sol.conductor_phone;
+                    delete sol.vehiculo_id;
+                    delete sol.tipo_vehiculo;
+                } else if (sol.vehicle_assignments && sol.vehicle_assignments.length > 0) {
+                    // Asegurar que los campos populados estén correctamente estructurados
+                    for (const assignment of sol.vehicle_assignments) {
+                        // Eliminar conductor_phone duplicado si existe
+                        delete assignment.conductor_phone;
+                        
+                        if (assignment.conductor_id && typeof assignment.conductor_id === 'object') {
+                            // Asegurar que el conductor tenga full_name correctamente estructurado
+                            if (!assignment.conductor_id.full_name && assignment.conductor_id.name) {
+                                assignment.conductor_id.full_name = assignment.conductor_id.name;
+                            }
+                            // Asegurar que phone esté presente en conductor_id (extraer de contact.phone)
+                            if (!assignment.conductor_id.phone) {
+                                if (assignment.conductor_id.contact?.phone) {
+                                    assignment.conductor_id.phone = assignment.conductor_id.contact.phone;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Eliminar campos duplicados del nivel superior cuando hay vehicle_assignments
+                    delete sol.placa;
+                    delete sol.flota;
+                    delete sol.conductor;
+                    delete sol.conductor_phone;
+                    delete sol.vehiculo_id;
+                    delete sol.tipo_vehiculo;
+                }
+            }
 
             const total = await solicitudModel.countDocuments(query);
 
@@ -2746,10 +3115,72 @@ export class SolicitudesService {
                     cliente: client_id
                 })
                 .populate('vehiculo_id', 'placa type flota seats name description picture')
-                .populate('conductor', 'full_name contact avatar')
+                .populate('conductor', 'full_name contact email avatar')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type flota seats name description picture')
+                .populate('vehicle_assignments.conductor_id', 'full_name contact email avatar')
                 .lean();
 
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada o no tienes acceso");
+
+            const sol = solicitud as any;
+
+            // Transformar solicitud: eliminar campos duplicados y estructurar correctamente
+            // Si vehicle_assignments está vacío o no existe, pero hay datos en campos individuales
+            if ((!sol.vehicle_assignments || sol.vehicle_assignments.length === 0) && sol.vehiculo_id) {
+                // Crear vehicle_assignments desde los campos individuales
+                sol.vehicle_assignments = [{
+                    vehiculo_id: sol.vehiculo_id,
+                    placa: sol.placa || (sol.vehiculo_id?.placa),
+                    seats: (sol.vehiculo_id as any)?.seats || sol.n_pasajeros || 0,
+                    assigned_passengers: sol.n_pasajeros || 0,
+                    conductor_id: sol.conductor ? {
+                        _id: sol.conductor._id || sol.conductor,
+                        full_name: sol.conductor.full_name || sol.conductor.name || "",
+                        email: sol.conductor.email || "",
+                        phone: sol.conductor.contact?.phone || sol.conductor.phone || sol.conductor_phone || "",
+                        avatar: sol.conductor.avatar || null
+                    } : null,
+                    contract_id: sol.contract_id || null,
+                    contract_charge_mode: sol.contract_charge_mode || "no_contract",
+                    contract_charge_amount: sol.contract_charge_amount || 0,
+                    accounting: sol.vehicle_assignments?.[0]?.accounting || {}
+                }];
+                
+                // Eliminar campos duplicados del nivel superior después de crear vehicle_assignments
+                delete sol.placa;
+                delete sol.flota;
+                delete sol.conductor;
+                delete sol.conductor_phone;
+                delete sol.vehiculo_id;
+                delete sol.tipo_vehiculo;
+            } else if (sol.vehicle_assignments && sol.vehicle_assignments.length > 0) {
+                // Asegurar que los campos populados estén correctamente estructurados
+                for (const assignment of sol.vehicle_assignments) {
+                    // Eliminar conductor_phone duplicado si existe
+                    delete assignment.conductor_phone;
+                    
+                    if (assignment.conductor_id && typeof assignment.conductor_id === 'object') {
+                        // Asegurar que el conductor tenga full_name correctamente estructurado
+                        if (!assignment.conductor_id.full_name && assignment.conductor_id.name) {
+                            assignment.conductor_id.full_name = assignment.conductor_id.name;
+                        }
+                        // Asegurar que phone esté presente en conductor_id (extraer de contact.phone)
+                        if (!assignment.conductor_id.phone) {
+                            if (assignment.conductor_id.contact?.phone) {
+                                assignment.conductor_id.phone = assignment.conductor_id.contact.phone;
+                            }
+                        }
+                    }
+                }
+                
+                // Eliminar campos duplicados del nivel superior cuando hay vehicle_assignments
+                delete sol.placa;
+                delete sol.flota;
+                delete sol.conductor;
+                delete sol.conductor_phone;
+                delete sol.vehiculo_id;
+                delete sol.tipo_vehiculo;
+            }
 
             return solicitud;
         } catch (error) {
@@ -2872,20 +3303,34 @@ export class SolicitudesService {
     }
 
     /**
+     * Limpiar nombre del cliente para usar en número de prefactura
+     * Elimina espacios, caracteres especiales y convierte a mayúsculas
+     */
+    private cleanClientNameForPrefactura(name: string): string {
+        return name
+            .trim()
+            .toUpperCase()
+            .replace(/\s+/g, '_') // Reemplazar espacios con guión bajo
+            .replace(/[^A-Z0-9_]/g, '') // Eliminar caracteres especiales excepto guión bajo
+            .replace(/_+/g, '_') // Reemplazar múltiples guiones bajos con uno solo
+            .replace(/^_|_$/g, ''); // Eliminar guiones bajos al inicio y final
+    }
+
+    /**
      * Generar prefactura para una solicitud
      * Requiere que todos los vehículos tengan operacional subido
+     * El número se genera automáticamente con el formato: PREF_{HE}_{NOMBRE_CLIENTE}
      */
     public async generate_prefactura({
         solicitud_id,
-        prefactura_numero,
         user_id
     }: {
         solicitud_id: string;
-        prefactura_numero: string;
         user_id: string;
     }) {
         try {
-            const solicitud = await solicitudModel.findById(solicitud_id);
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('cliente', 'name');
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
             // Validar que la solicitud tenga valores definidos (puede ser 0 para solicitudes gratuitas)
@@ -2913,6 +3358,22 @@ export class SolicitudesService {
                 throw new ResponseError(400, "Ya existe una prefactura generada para esta solicitud");
             }
 
+            // Obtener información del cliente
+            const cliente = (solicitud as any).cliente;
+            if (!cliente || !cliente.name) {
+                throw new ResponseError(400, "No se puede generar la prefactura: la solicitud no tiene cliente asociado");
+            }
+
+            // Obtener el consecutivo de la solicitud (HE)
+            const he = solicitud.he;
+            if (!he) {
+                throw new ResponseError(400, "No se puede generar la prefactura: la solicitud no tiene consecutivo (HE)");
+            }
+
+            // Generar número de prefactura automáticamente
+            const nombreClienteLimpio = this.cleanClientNameForPrefactura(cliente.name);
+            const prefactura_numero = `PREF_${he}_${nombreClienteLimpio}`;
+
             // Generar prefactura
             (solicitud as any).prefactura = {
                 numero: prefactura_numero,
@@ -2923,6 +3384,9 @@ export class SolicitudesService {
                 historial_envios: []
             };
 
+            // Guardar auditoría
+            (solicitud as any).generated_prefactura_by = user_id;
+            (solicitud as any).generated_prefactura_at = new Date();
             (solicitud as any).accounting_status = "prefactura_pendiente";
             (solicitud as any).last_modified_by = user_id;
 
@@ -2943,16 +3407,163 @@ export class SolicitudesService {
     }
 
     /**
+     * Generar prefactura para múltiples solicitudes del mismo cliente
+     * Todas las solicitudes compartirán el mismo número de prefactura
+     * El número se genera automáticamente con el formato: PREF_MULTI_{HE_PRIMERA}-{HE_ULTIMA}_{NOMBRE_CLIENTE}
+     */
+    public async generate_prefactura_multiple({
+        solicitud_ids,
+        user_id
+    }: {
+        solicitud_ids: string[];
+        user_id: string;
+    }) {
+        try {
+            // Validar que se envíen solicitudes
+            if (!solicitud_ids || solicitud_ids.length === 0) {
+                throw new ResponseError(400, "Debe proporcionar al menos una solicitud");
+            }
+
+            if (solicitud_ids.length === 1) {
+                // Si solo hay una solicitud, usar el método individual
+                return await this.generate_prefactura({
+                    solicitud_id: solicitud_ids[0],
+                    user_id
+                });
+            }
+
+            // Obtener todas las solicitudes
+            const solicitudes = await solicitudModel.find({
+                _id: { $in: solicitud_ids }
+            }).populate('cliente', 'name');
+
+            // Validar que todas las solicitudes existan
+            if (solicitudes.length !== solicitud_ids.length) {
+                const encontradas = solicitudes.map(s => s._id.toString());
+                const noEncontradas = solicitud_ids.filter(id => !encontradas.includes(id));
+                throw new ResponseError(404, `Las siguientes solicitudes no fueron encontradas: ${noEncontradas.join(", ")}`);
+            }
+
+            // Validar que todas pertenezcan al mismo cliente
+            const clienteIds = solicitudes.map(s => (s.cliente as any)?._id?.toString() || s.cliente?.toString());
+            const clienteUnico = [...new Set(clienteIds)];
+            if (clienteUnico.length > 1) {
+                throw new ResponseError(400, "Todas las solicitudes deben pertenecer al mismo cliente");
+            }
+
+            const clienteId = clienteUnico[0];
+            const primeraSolicitud = solicitudes[0];
+            const cliente = (primeraSolicitud as any).cliente;
+            
+            if (!cliente || !cliente.name) {
+                throw new ResponseError(400, "No se puede generar la prefactura: las solicitudes no tienen cliente asociado");
+            }
+
+            // Validar que ninguna tenga prefactura ya generada
+            const solicitudesConPrefactura = solicitudes.filter(s => (s as any).prefactura?.numero);
+            if (solicitudesConPrefactura.length > 0) {
+                const hesConPrefactura = solicitudesConPrefactura.map(s => s.he).join(", ");
+                throw new ResponseError(400, `Las siguientes solicitudes ya tienen prefactura generada: ${hesConPrefactura}`);
+            }
+
+            // Validar valores y operacionales para cada solicitud
+            const errores: string[] = [];
+            const hesOrdenados = solicitudes.map(s => s.he).sort();
+
+            for (const solicitud of solicitudes) {
+                // Validar valores definidos
+                if (solicitud.valor_a_facturar === undefined || solicitud.valor_a_facturar === null) {
+                    errores.push(`La solicitud ${solicitud.he} no tiene valores de venta definidos`);
+                    continue;
+                }
+
+                if (solicitud.valor_cancelado === undefined || solicitud.valor_cancelado === null) {
+                    errores.push(`La solicitud ${solicitud.he} no tiene valores de costos definidos`);
+                    continue;
+                }
+
+                // Validar operacionales
+                const operationalCheck = await this.verify_operationals_complete({ 
+                    solicitud_id: solicitud._id.toString(),
+                    auto_update_status: false 
+                });
+                if (!operationalCheck.all_complete) {
+                    const missingPlacas = operationalCheck.missing_operationals.map(v => v.placa).join(", ");
+                    errores.push(`Faltan operacionales en la solicitud ${solicitud.he} para los vehículos: ${missingPlacas}`);
+                }
+
+                // Validar que tenga consecutivo (HE)
+                if (!solicitud.he) {
+                    errores.push(`La solicitud ${solicitud._id} no tiene consecutivo (HE)`);
+                }
+            }
+
+            if (errores.length > 0) {
+                throw new ResponseError(400, errores.join("; "));
+            }
+
+            // Generar número de prefactura automáticamente
+            const nombreClienteLimpio = this.cleanClientNameForPrefactura(cliente.name);
+            const hePrimera = hesOrdenados[0];
+            const heUltima = hesOrdenados[hesOrdenados.length - 1];
+            const prefactura_numero = hesOrdenados.length === 1 
+                ? `PREF_${hePrimera}_${nombreClienteLimpio}`
+                : `PREF_MULTI_${hePrimera}-${heUltima}_${nombreClienteLimpio}`;
+
+            const fechaPrefactura = new Date();
+
+            // Generar prefactura para todas las solicitudes
+            const solicitudesActualizadas = [];
+            for (const solicitud of solicitudes) {
+                (solicitud as any).prefactura = {
+                    numero: prefactura_numero,
+                    fecha: fechaPrefactura,
+                    aprobada: false,
+                    estado: "pendiente",
+                    enviada_al_cliente: false,
+                    historial_envios: []
+                };
+
+                // Guardar auditoría
+                (solicitud as any).generated_prefactura_by = user_id;
+                (solicitud as any).generated_prefactura_at = fechaPrefactura;
+                (solicitud as any).accounting_status = "prefactura_pendiente";
+                (solicitud as any).last_modified_by = user_id;
+
+                await solicitud.save();
+
+                // Populizar IDs de prefactura antes de retornar
+                const solicitudObj = solicitud.toObject();
+                await this.populate_prefactura_ids(solicitudObj);
+                solicitudesActualizadas.push(solicitudObj);
+            }
+
+            return {
+                message: `Prefactura generada exitosamente para ${solicitudes.length} solicitud(es)`,
+                prefactura_numero: prefactura_numero,
+                solicitudes: solicitudesActualizadas
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al generar prefactura múltiple");
+        }
+    }
+
+    /**
      * Aprobar prefactura
+     * Si ya está aprobada, permite reenviar al cliente
+     * Al aprobar, automáticamente marca como "listo_para_facturacion"
      */
     public async approve_prefactura({
         solicitud_id,
         user_id,
-        notas
+        notas,
+        reenviar = false
     }: {
         solicitud_id: string;
         user_id: string;
         notas?: string;
+        reenviar?: boolean;
     }) {
         try {
             const solicitud = await solicitudModel.findById(solicitud_id);
@@ -2962,11 +3573,30 @@ export class SolicitudesService {
                 throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
             }
 
-            if ((solicitud as any).prefactura.aprobada) {
-                throw new ResponseError(400, "La prefactura ya fue aprobada");
+            // Si ya está aprobada y se solicita reenviar, solo actualizar notas y retornar
+            if ((solicitud as any).prefactura.aprobada && reenviar) {
+                if (notas) {
+                    (solicitud as any).prefactura.notas = notas;
+                }
+                (solicitud as any).last_modified_by = user_id;
+                await solicitud.save();
+
+                const solicitudObj = solicitud.toObject();
+                await this.populate_prefactura_ids(solicitudObj);
+
+                return {
+                    message: "Prefactura ya aprobada. Lista para reenviar al cliente.",
+                    solicitud: solicitudObj,
+                    puede_reenviar: true
+                };
             }
 
-            // Aprobar prefactura
+            // Si ya está aprobada y no se solicita reenviar, retornar error
+            if ((solicitud as any).prefactura.aprobada && !reenviar) {
+                throw new ResponseError(400, "La prefactura ya fue aprobada. Use el parámetro 'reenviar=true' para reenviarla al cliente.");
+            }
+
+            // Aprobar prefactura (primera vez)
             (solicitud as any).prefactura.aprobada = true;
             (solicitud as any).prefactura.aprobada_por = user_id;
             (solicitud as any).prefactura.aprobada_fecha = new Date();
@@ -2974,7 +3604,8 @@ export class SolicitudesService {
                 (solicitud as any).prefactura.notas = notas;
             }
 
-            (solicitud as any).accounting_status = "prefactura_aprobada";
+            // Automáticamente marcar como listo para facturación
+            (solicitud as any).accounting_status = "listo_para_facturacion";
             (solicitud as any).last_modified_by = user_id;
 
             await solicitud.save();
@@ -2984,7 +3615,7 @@ export class SolicitudesService {
             await this.populate_prefactura_ids(solicitudObj);
 
             return {
-                message: "Prefactura aprobada exitosamente",
+                message: "Prefactura aprobada exitosamente y marcada como lista para facturación",
                 solicitud: solicitudObj
             };
         } catch (error) {
@@ -3077,7 +3708,8 @@ export class SolicitudesService {
 
     /**
      * Enviar prefactura al cliente
-     * Acepta la prefactura y la envía al cliente
+     * Permite reenviar la prefactura en cualquier momento si ya está generada
+     * Genera el PDF y lo envía por correo
      */
     public async send_prefactura_to_client({
         solicitud_id,
@@ -3089,50 +3721,96 @@ export class SolicitudesService {
         notas?: string;
     }) {
         try {
-            const solicitud = await solicitudModel.findById(solicitud_id);
-            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate({
+                    path: 'cliente',
+                    select: 'name contacts phone email company_id',
+                    populate: {
+                        path: 'company_id',
+                        select: 'company_name document logo'
+                    }
+                })
+                .lean();
 
-            // Validar que la prefactura esté aprobada o lista para facturación
-            const accountingStatus = (solicitud as any).accounting_status;
-            if (accountingStatus !== "prefactura_aprobada" && accountingStatus !== "listo_para_facturacion") {
-                throw new ResponseError(400, "La prefactura debe estar aprobada antes de enviarla al cliente");
-            }
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
             // Validar que existe una prefactura generada
             if (!(solicitud as any).prefactura?.numero) {
                 throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
             }
 
+            const client = (solicitud as any).cliente;
+            if (!client) {
+                throw new ResponseError(400, "No se pudo obtener la información del cliente");
+            }
+
+            const company = (client as any)?.company_id;
+            // Para el email: client_name debe ser el nombre del contacto (persona que recibe el email)
+            // Para el PDF: cliente_name es el nombre del cliente (empresa) y contacto es el nombre del contacto
+            const contactoName = (client?.contacts && Array.isArray(client.contacts) && client.contacts.length > 0) 
+                ? client.contacts[0].name 
+                : ((solicitud as any).contacto || client?.name || 'N/A');
+            const clienteEmail = client?.email;
+
+            if (!clienteEmail) {
+                throw new ResponseError(400, "El cliente no tiene un email registrado");
+            }
+
+            // Generar PDF de la prefactura
+            const { filename, buffer } = await this.generate_prefactura_pdf({ solicitud_id });
+
+            // Generar link al dashboard del cliente
+            // El frontend debería configurar la URL base
+            const frontendUrl = process.env.FRONTEND_URL || 'https://dashboard.example.com';
+            const dashboardLink = `${frontendUrl}/prefacturas/${solicitud_id}`;
+
+            // Enviar email con PDF adjunto
+            // En el saludo del email se usa el nombre del contacto (persona)
+            await send_client_prefactura({
+                client_name: contactoName,
+                client_email: clienteEmail,
+                company_name: company?.company_name || 'Empresa',
+                prefactura_numero: (solicitud as any).prefactura.numero,
+                he: (solicitud as any).he || 'N/A',
+                prefactura_pdf: { filename, buffer },
+                notas,
+                dashboard_link: dashboardLink
+            });
+
+            // Actualizar historial de envíos (obtener solicitud sin populate para actualizar)
+            const solicitudToUpdate = await solicitudModel.findById(solicitud_id);
+            if (!solicitudToUpdate) throw new ResponseError(404, "Solicitud no encontrada");
+
             // Inicializar prefactura si no existe completamente
-            if (!(solicitud as any).prefactura) {
-                (solicitud as any).prefactura = {};
+            if (!(solicitudToUpdate as any).prefactura) {
+                (solicitudToUpdate as any).prefactura = {};
             }
 
             // Inicializar historial si no existe
-            if (!(solicitud as any).prefactura.historial_envios) {
-                (solicitud as any).prefactura.historial_envios = [];
+            if (!(solicitudToUpdate as any).prefactura.historial_envios) {
+                (solicitudToUpdate as any).prefactura.historial_envios = [];
             }
 
-            // Actualizar estado a aceptada
-            (solicitud as any).prefactura.estado = "aceptada";
-            (solicitud as any).prefactura.enviada_al_cliente = true;
-            (solicitud as any).prefactura.fecha_envio_cliente = new Date();
-            (solicitud as any).prefactura.enviada_por = user_id;
+            // Actualizar estado
+            (solicitudToUpdate as any).prefactura.estado = "aceptada";
+            (solicitudToUpdate as any).prefactura.enviada_al_cliente = true;
+            (solicitudToUpdate as any).prefactura.fecha_envio_cliente = new Date();
+            (solicitudToUpdate as any).prefactura.enviada_por = user_id;
 
             // Agregar entrada al historial
-            (solicitud as any).prefactura.historial_envios.push({
+            (solicitudToUpdate as any).prefactura.historial_envios.push({
                 fecha: new Date(),
                 estado: "aceptada",
                 enviado_por: user_id,
                 notas: notas || undefined
             });
 
-            (solicitud as any).last_modified_by = user_id;
+            (solicitudToUpdate as any).last_modified_by = user_id;
 
-            await solicitud.save();
+            await solicitudToUpdate.save();
 
             // Populizar IDs de prefactura antes de retornar
-            const solicitudObj = solicitud.toObject();
+            const solicitudObj = solicitudToUpdate.toObject();
             await this.populate_prefactura_ids(solicitudObj);
 
             return {
@@ -3141,7 +3819,8 @@ export class SolicitudesService {
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "Error al enviar prefactura al cliente");
+            console.error("Error al enviar prefactura al cliente:", error);
+            throw new ResponseError(500, `Error al enviar prefactura al cliente: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -3252,9 +3931,183 @@ export class SolicitudesService {
     }
 
     /**
+     * Obtener documentos de un vehículo (SOAT, licencia tránsito, etc.) como buffers
+     */
+    private async get_vehicle_documents_as_buffers(vehicle_id: string): Promise<Array<{ filename: string; buffer: Buffer }>> {
+        try {
+            const vehicleDocs = await vhc_documentsModel.findOne({ vehicle_id }).lean();
+            if (!vehicleDocs) return [];
+
+            const documents: Array<{ filename: string; buffer: Buffer }> = [];
+
+            // Función auxiliar para descargar y convertir a buffer
+            const downloadDocument = async (doc: any, name: string, placa?: string): Promise<void> => {
+                if (doc?.url) {
+                    try {
+                        const response = await axios.get(doc.url, { responseType: 'arraybuffer' });
+                        const extension = doc.file_extension || 'pdf';
+                        const safePlaca = placa ? placa.replace(/[^a-zA-Z0-9_-]/g, "_") : vehicle_id;
+                        documents.push({
+                            filename: `${name}_${safePlaca}.${extension}`,
+                            buffer: Buffer.from(response.data)
+                        });
+                    } catch (error) {
+                        console.error(`Error descargando ${name}:`, error);
+                    }
+                }
+            };
+
+            // Obtener placa del vehículo para mejor nombre de archivo
+            const vehicle = await vehicleModel.findById(vehicle_id).select('placa').lean();
+            const placa = (vehicle as any)?.placa || '';
+
+            await Promise.all([
+                downloadDocument((vehicleDocs as any).soat, 'SOAT', placa),
+                downloadDocument((vehicleDocs as any).licencia_transito, 'Licencia_Transito', placa),
+            ]);
+
+            return documents;
+        } catch (error) {
+            console.error("Error obteniendo documentos del vehículo:", error);
+            return [];
+        }
+    }
+
+    /**
+     * Obtener documentos de un conductor (licencia conducción, cédula) como buffers
+     * Genera PDFs combinando las 2 imágenes lado a lado
+     */
+    private async get_driver_documents_as_buffers(driver_id: string, driver_name?: string): Promise<Array<{ filename: string; buffer: Buffer }>> {
+        try {
+            const driverDocs = await driver_documentsModel.findOne({ driver_id }).lean();
+            if (!driverDocs) return [];
+
+            const documents: Array<{ filename: string; buffer: Buffer }> = [];
+
+            // Función auxiliar para descargar imagen como base64
+            const downloadImageAsBase64 = async (doc: any): Promise<string | null> => {
+                if (!doc?.url) return null;
+                try {
+                    const response = await axios.get(doc.url, { responseType: 'arraybuffer' });
+                    const base64 = Buffer.from(response.data).toString('base64');
+                    const extension = doc.url.split('.').pop()?.split('?')[0] || 'jpg';
+                    return `data:image/${extension === 'png' ? 'png' : 'jpeg'};base64,${base64}`;
+                } catch (error) {
+                    console.error(`Error descargando imagen:`, error);
+                    return null;
+                }
+            };
+
+            // Función auxiliar para generar PDF con 2 imágenes lado a lado
+            const generateSideBySidePdf = async (
+                frontImage: string | null,
+                backImage: string | null,
+                title: string,
+                filename: string
+            ): Promise<void> => {
+                if (!frontImage && !backImage) return;
+
+                const html = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <title>${title}</title>
+                        <style>
+                            body {
+                                margin: 0;
+                                padding: 20px;
+                                font-family: Arial, sans-serif;
+                            }
+                            .container {
+                                display: flex;
+                                gap: 20px;
+                                justify-content: center;
+                                align-items: flex-start;
+                            }
+                            .image-container {
+                                flex: 1;
+                                max-width: 50%;
+                            }
+                            .image-container img {
+                                width: 100%;
+                                height: auto;
+                                border: 1px solid #ddd;
+                                border-radius: 4px;
+                            }
+                            .title {
+                                text-align: center;
+                                font-size: 16px;
+                                font-weight: bold;
+                                margin-bottom: 20px;
+                                color: #333;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="title">${title}</div>
+                        <div class="container">
+                            ${frontImage ? `<div class="image-container"><img src="${frontImage}" alt="Frontal" /></div>` : ''}
+                            ${backImage ? `<div class="image-container"><img src="${backImage}" alt="Trasera" /></div>` : ''}
+                        </div>
+                    </body>
+                    </html>
+                `;
+
+                try {
+                    const pdfBuffer = await renderHtmlToPdfBuffer(html);
+                    documents.push({
+                        filename,
+                        buffer: pdfBuffer
+                    });
+                } catch (error) {
+                    console.error(`Error generando PDF ${filename}:`, error);
+                }
+            };
+
+            // Obtener nombre del conductor si no se proporciona
+            let conductorName = driver_name;
+            if (!conductorName) {
+                const driver = await userModel.findById(driver_id).select('full_name').lean();
+                conductorName = (driver as any)?.full_name || 'conductor';
+            }
+            const safeName = String(conductorName).replace(/[^a-zA-Z0-9_-]/g, "_");
+
+            // Licencia de conducción (combinar front y back en un PDF)
+            const licenciaFront = await downloadImageAsBase64((driverDocs as any).licencia_conduccion?.front);
+            const licenciaBack = await downloadImageAsBase64((driverDocs as any).licencia_conduccion?.back);
+            if (licenciaFront || licenciaBack) {
+                await generateSideBySidePdf(
+                    licenciaFront,
+                    licenciaBack,
+                    `Licencia de Conducción - ${conductorName}`,
+                    `licencia_conduccion_${safeName}.pdf`
+                );
+            }
+
+            // Cédula (combinar front y back en un PDF)
+            const cedulaFront = await downloadImageAsBase64((driverDocs as any).document?.front);
+            const cedulaBack = await downloadImageAsBase64((driverDocs as any).document?.back);
+            if (cedulaFront || cedulaBack) {
+                await generateSideBySidePdf(
+                    cedulaFront,
+                    cedulaBack,
+                    `Cédula de Ciudadanía - ${conductorName}`,
+                    `cedula_${safeName}.pdf`
+                );
+            }
+
+            return documents;
+        } catch (error) {
+            console.error("Error obteniendo documentos del conductor:", error);
+            return [];
+        }
+    }
+
+    /**
      * Enviar correos cuando la solicitud está completamente rellenada
-     * Envía al cliente: hoja de vida del conductor, ficha técnica de vehículos, información de solicitud (PDFs)
-     * Envía al conductor: información de solicitud y manifiesto de pasajeros (PDF)
+     * Envía al cliente: hojas de vida de conductores, SOATs, licencias, fichas técnicas de vehículos
+     * Envía a cada conductor: manifiesto de pasajeros con información del servicio
      */
     private async send_emails_solicitud_complete({
         solicitud_id
@@ -3266,24 +4119,31 @@ export class SolicitudesService {
                 .populate('cliente', 'name email contacts phone')
                 .populate('conductor', 'full_name email')
                 .populate('vehiculo_id')
+                .populate('vehicle_assignments.vehiculo_id')
+                .populate('vehicle_assignments.conductor_id', 'full_name email')
                 .lean();
 
             if (!solicitud) return;
-            if (!(solicitud as any).vehiculo_id || !(solicitud as any).conductor) return; // No está completamente rellenada
 
             const client = (solicitud as any).cliente;
-            const conductor = (solicitud as any).conductor;
-            const vehicle = (solicitud as any).vehiculo_id;
+            if (!client) return;
 
-            if (!client || !conductor || !vehicle) return;
+            // Obtener email del cliente
+            const clientEmail = client.email || (client.contacts && Array.isArray(client.contacts) && client.contacts.length > 0 ? client.contacts[0].email : null);
+            if (!clientEmail) return; // No hay email del cliente
 
-            // Obtener emails
-            const clientEmail = client.email || (client.contacts && client.contacts.length > 0 ? client.contacts[0].email : null);
-            const driverEmail = (conductor as any).email;
+            // Para el saludo del email al cliente, usar el nombre del contacto (persona que recibe)
+            // El nombre del cliente (empresa) se muestra en otros lugares del email si es necesario
+            const contactoName = (client.contacts && Array.isArray(client.contacts) && client.contacts.length > 0) 
+                ? client.contacts[0].name 
+                : ((solicitud as any).contacto || client.name || 'N/A');
+            const clientName = contactoName; // Para el saludo del email
 
-            if (!clientEmail && !driverEmail) return; // No hay emails para enviar
+            // Determinar si hay vehicle_assignments o vehículo individual
+            const vehicleAssignments = (solicitud as any).vehicle_assignments || [];
+            const hasMultipleVehicles = vehicleAssignments.length > 0;
 
-            // Generar PDFs
+            // Importar servicios
             const { send_client_solicitud_complete, send_driver_solicitud_complete } = await import('@/email/index.email');
             const { UserService } = await import('@/services/users.service');
             const { VehicleServices } = await import('@/services/vehicles.service');
@@ -3291,71 +4151,622 @@ export class SolicitudesService {
             const userService = new UserService();
             const vehicleService = new VehicleServices();
 
-            // Generar hoja de vida del conductor
-            const driverCvPdf = await userService.generate_driver_technical_sheet_pdf({
-                driver_id: String((solicitud as any).conductor)
-            });
+            // Preparar documentos para el cliente
+            const clientAttachments: Array<{ filename: string; buffer: Buffer }> = [];
+            const driverCvs: Array<{ filename: string; buffer: Buffer }> = [];
+            const vehicleTechnicalSheets: Array<{ filename: string; buffer: Buffer }> = [];
+            // Los documentos adicionales ahora están integrados en los PDFs principales
 
-            // Generar ficha técnica del vehículo
-            const vehicleTechnicalSheetPdf = await vehicleService.generate_vehicle_technical_sheet_pdf({
-                vehicle_id: String((solicitud as any).vehiculo_id)
-            });
+            // Procesar vehículos y conductores
+            if (hasMultipleVehicles) {
+                // Múltiples vehículos
+                for (const assignment of vehicleAssignments) {
+                    const vehiculo = assignment.vehiculo_id;
+                    const conductor = assignment.conductor_id;
 
-            // Generar manifiesto de pasajeros
-            const passengerManifestPdf = await this.generate_passenger_manifest_pdf({
-                solicitud_id
-            });
+                    if (!vehiculo || !conductor) continue;
 
-            // Generar PDF de información de solicitud (simplificado - puedes mejorarlo)
-            const solicitudInfoPdf = await this.generate_solicitud_info_pdf({
-                solicitud_id
-            });
+                    const vehiculoId = String(vehiculo._id || vehiculo);
+                    const conductorId = String(conductor._id || conductor);
 
-            // Preparar información de solicitud
-            const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
-            const clientName = (client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name;
+                    // Generar hoja de vida del conductor
+                    try {
+                        const driverCv = await userService.generate_driver_technical_sheet_pdf({
+                            driver_id: conductorId
+                        });
+                        // Cambiar el nombre del archivo a hoja_de_vida_conductor_{nombre}
+                        const conductorName = (conductor as any).full_name || 'conductor';
+                        const safeName = String(conductorName).replace(/[^a-zA-Z0-9_-]/g, "_");
+                        driverCvs.push({
+                            filename: `hoja_de_vida_conductor_${safeName}.pdf`,
+                            buffer: driverCv.buffer
+                        });
+                    } catch (error) {
+                        console.error(`Error generando hoja de vida del conductor ${conductorId}:`, error);
+                    }
 
-            // Enviar correo al cliente
-            if (clientEmail) {
-                await send_client_solicitud_complete({
-                    client_name: clientName,
-                    client_email: clientEmail,
-                    solicitud_info: {
-                        fecha: fechaFormatted,
-                        hora_inicio: (solicitud as any).hora_inicio,
-                        origen: (solicitud as any).origen,
-                        destino: (solicitud as any).destino,
-                        n_pasajeros: (solicitud as any).n_pasajeros || 0,
-                        vehiculo_placa: vehicle.placa || "",
-                        conductor_name: (conductor as any).full_name || ""
-                    },
-                    driver_cv_pdf: driverCvPdf,
-                    vehicle_technical_sheets_pdf: [vehicleTechnicalSheetPdf],
-                    solicitud_info_pdf: solicitudInfoPdf
-                });
+                    // Generar ficha técnica del vehículo
+                    try {
+                        const vehicleSheet = await vehicleService.generate_vehicle_technical_sheet_pdf({
+                            vehicle_id: vehiculoId
+                        });
+                        vehicleTechnicalSheets.push(vehicleSheet);
+                    } catch (error) {
+                        console.error(`Error generando ficha técnica del vehículo ${vehiculoId}:`, error);
+                    }
+
+                    // Generar PDFs de documentos del conductor (cédula y licencia)
+                    try {
+                        const conductorName = (conductor as any).full_name || 'conductor';
+                        const driverDocs = await this.get_driver_documents_as_buffers(conductorId, conductorName);
+                        clientAttachments.push(...driverDocs);
+                    } catch (error) {
+                        console.error(`Error generando documentos del conductor ${conductorId}:`, error);
+                    }
+
+                    // Descargar PDFs de documentos del vehículo (SOAT y licencia de tránsito)
+                    try {
+                        const vehicleDocs = await this.get_vehicle_documents_as_buffers(vehiculoId);
+                        clientAttachments.push(...vehicleDocs);
+                    } catch (error) {
+                        console.error(`Error descargando documentos del vehículo ${vehiculoId}:`, error);
+                    }
+
+                    // Enviar manifiesto al conductor
+                    const driverEmail = (conductor as any).email;
+                    if (driverEmail) {
+                        try {
+                            const manifestPdf = await this.generate_passenger_manifest_pdf({
+                                solicitud_id,
+                                vehiculo_id: vehiculoId,
+                                conductor_id: conductorId,
+                                assigned_passengers: assignment.assigned_passengers
+                            });
+
+                            const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+                            // Asegurar que cliente_name sea el nombre del cliente y contacto sea el nombre del contacto
+                            const clienteNombre = client.name || 'N/A';
+                            const contactoNombre = (solicitud as any).contacto || (client.contacts && client.contacts.length > 0 ? client.contacts[0].name : 'N/A');
+                            const contactoTelefono = (solicitud as any).contacto_phone || (client.contacts && client.contacts.length > 0 ? client.contacts[0].phone : 'N/A');
+                            
+                            await send_driver_solicitud_complete({
+                                driver_name: (conductor as any).full_name || "",
+                                driver_email: driverEmail,
+                                solicitud_info: {
+                                    fecha: fechaFormatted,
+                                    hora_inicio: (solicitud as any).hora_inicio,
+                                    origen: (solicitud as any).origen,
+                                    destino: (solicitud as any).destino,
+                                    n_pasajeros: assignment.assigned_passengers || 0,
+                                    cliente_name: clienteNombre,
+                                    contacto: contactoNombre,
+                                    contacto_phone: contactoTelefono
+                                },
+                                passenger_manifest_pdf: manifestPdf
+                            });
+                        } catch (error) {
+                            console.error(`Error enviando correo al conductor ${conductorId}:`, error);
+                        }
+                    }
+                }
+            } else {
+                // Vehículo individual (compatibilidad)
+                const vehiculo = (solicitud as any).vehiculo_id;
+                const conductor = (solicitud as any).conductor;
+
+                if (!vehiculo || !conductor) return;
+
+                const vehiculoId = String(vehiculo._id || vehiculo);
+                const conductorId = String(conductor._id || conductor);
+
+                // Generar hoja de vida del conductor
+                try {
+                    const driverCv = await userService.generate_driver_technical_sheet_pdf({
+                        driver_id: conductorId
+                    });
+                    // Cambiar el nombre del archivo a hoja_de_vida_conductor_{nombre}
+                    const conductorName = (conductor as any).full_name || 'conductor';
+                    const safeName = String(conductorName).replace(/[^a-zA-Z0-9_-]/g, "_");
+                    driverCvs.push({
+                        filename: `hoja_de_vida_conductor_${safeName}.pdf`,
+                        buffer: driverCv.buffer
+                    });
+                } catch (error) {
+                    console.error(`Error generando hoja de vida del conductor ${conductorId}:`, error);
+                }
+
+                // Generar ficha técnica del vehículo
+                try {
+                    const vehicleSheet = await vehicleService.generate_vehicle_technical_sheet_pdf({
+                        vehicle_id: vehiculoId
+                    });
+                    vehicleTechnicalSheets.push(vehicleSheet);
+                } catch (error) {
+                    console.error(`Error generando ficha técnica del vehículo ${vehiculoId}:`, error);
+                }
+
+                // Los documentos del vehículo (SOAT, licencia tránsito) y del conductor (licencia, cédula)
+                // ahora están integrados en los PDFs de las fichas técnicas
+
+                // Enviar manifiesto al conductor
+                const driverEmail = (conductor as any).email;
+                if (driverEmail) {
+                    try {
+                        const manifestPdf = await this.generate_passenger_manifest_pdf({
+                            solicitud_id,
+                            vehiculo_id: vehiculoId,
+                            conductor_id: conductorId,
+                            assigned_passengers: (solicitud as any).n_pasajeros
+                        });
+
+                        const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+                        await send_driver_solicitud_complete({
+                            driver_name: (conductor as any).full_name || "",
+                            driver_email: driverEmail,
+                            solicitud_info: {
+                                fecha: fechaFormatted,
+                                hora_inicio: (solicitud as any).hora_inicio,
+                                origen: (solicitud as any).origen,
+                                destino: (solicitud as any).destino,
+                                n_pasajeros: (solicitud as any).n_pasajeros || 0,
+                                cliente_name: clientName,
+                                contacto: (solicitud as any).contacto || "",
+                                contacto_phone: (solicitud as any).contacto_phone || ""
+                            },
+                            passenger_manifest_pdf: manifestPdf
+                        });
+                    } catch (error) {
+                        console.error(`Error enviando correo al conductor ${conductorId}:`, error);
+                    }
+                }
             }
 
-            // Enviar correo al conductor
-            if (driverEmail) {
-                await send_driver_solicitud_complete({
-                    driver_name: (conductor as any).full_name || "",
-                    driver_email: driverEmail,
-                    solicitud_info: {
-                        fecha: fechaFormatted,
-                        hora_inicio: (solicitud as any).hora_inicio,
-                        origen: (solicitud as any).origen,
-                        destino: (solicitud as any).destino,
-                        n_pasajeros: (solicitud as any).n_pasajeros || 0,
-                        cliente_name: clientName,
-                        contacto: (solicitud as any).contacto || "",
-                        contacto_phone: (solicitud as any).contacto_phone || ""
-                    },
-                    passenger_manifest_pdf: passengerManifestPdf
+            // Combinar todos los documentos para el cliente
+            clientAttachments.push(...driverCvs);
+            clientAttachments.push(...vehicleTechnicalSheets);
+
+            // Generar PDF de información de solicitud
+            let solicitudInfoPdf: { filename: string; buffer: Buffer } | null = null;
+            try {
+                solicitudInfoPdf = await this.generate_solicitud_info_pdf({
+                    solicitud_id
                 });
+            } catch (error) {
+                console.error("Error generando PDF de información de solicitud:", error);
+            }
+
+            // Enviar correo al cliente con todos los documentos
+            const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+            
+            // Preparar lista de vehículos y conductores para el email
+            let vehiculosConductoresList: Array<{ placa: string; conductor: string; pasajeros: number }> = [];
+            if (hasMultipleVehicles) {
+                vehiculosConductoresList = vehicleAssignments.map((assignment: any) => ({
+                    placa: (assignment.vehiculo_id as any)?.placa || assignment.placa || 'N/A',
+                    conductor: (assignment.conductor_id as any)?.full_name || 'N/A',
+                    pasajeros: assignment.assigned_passengers || 0
+                }));
+            } else {
+                const vehiculo = (solicitud as any).vehiculo_id;
+                const conductor = (solicitud as any).conductor;
+                vehiculosConductoresList = [{
+                    placa: (vehiculo as any)?.placa || 'N/A',
+                    conductor: (conductor as any)?.full_name || 'N/A',
+                    pasajeros: (solicitud as any).n_pasajeros || 0
+                }];
+            }
+
+            // Generar HTML de la tabla de vehículos y conductores
+            const vehiculosTableHtml = vehiculosConductoresList.map((vc, idx) => 
+                `<tr>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${idx + 1}</td>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${vc.placa}</td>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${vc.conductor}</td>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${vc.pasajeros}</td>
+                </tr>`
+            ).join('');
+
+            await send_client_solicitud_complete({
+                client_name: clientName,
+                client_email: clientEmail,
+                solicitud_info: {
+                    fecha: fechaFormatted,
+                    hora_inicio: (solicitud as any).hora_inicio,
+                    origen: (solicitud as any).origen,
+                    destino: (solicitud as any).destino,
+                    n_pasajeros: (solicitud as any).n_pasajeros || 0,
+                    vehiculos_table: vehiculosTableHtml || '<tr><td colspan="4" style="padding: 8px; text-align: left; border: 1px solid #ddd;">No hay vehículos asignados</td></tr>'
+                },
+                driver_cv_pdf: driverCvs, // Enviar todos los CVs
+                vehicle_technical_sheets_pdf: vehicleTechnicalSheets,
+                solicitud_info_pdf: solicitudInfoPdf || { filename: 'solicitud_info.pdf', buffer: Buffer.from('') },
+                // Agregar documentos adicionales (cédulas, licencias, SOATs, licencias de tránsito)
+                additional_attachments: clientAttachments.filter(att => 
+                    !driverCvs.some(cv => cv.filename === att.filename) &&
+                    !vehicleTechnicalSheets.some(vs => vs.filename === att.filename) &&
+                    att.filename !== (solicitudInfoPdf?.filename || 'solicitud_info.pdf')
+                )
+            });
+        } catch (error) {
+            console.error("Error enviando correos de solicitud completa:", error);
+            // No lanzar error para no interrumpir el flujo principal
+        }
+    }
+
+    /**
+     * Reenviar correos solo a los conductores asignados
+     * Envía a cada conductor: manifiesto de pasajeros con información del servicio
+     */
+    public async resend_emails_to_drivers({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }): Promise<void> {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('cliente', 'name email contacts phone')
+                .populate('conductor', 'full_name email')
+                .populate('vehiculo_id')
+                .populate('vehicle_assignments.vehiculo_id')
+                .populate('vehicle_assignments.conductor_id', 'full_name email')
+                .lean();
+
+            if (!solicitud) {
+                throw new ResponseError(404, "Solicitud no encontrada");
+            }
+
+            const client = (solicitud as any).cliente;
+            if (!client) {
+                throw new ResponseError(400, "No se pudo obtener la información del cliente");
+            }
+
+            // Para el saludo del email al cliente, usar el nombre del contacto (persona que recibe)
+            const contactoName = (client.contacts && Array.isArray(client.contacts) && client.contacts.length > 0) 
+                ? client.contacts[0].name 
+                : ((solicitud as any).contacto || client.name || 'N/A');
+            const clientName = contactoName; // Para el saludo del email
+
+            // Determinar si hay vehicle_assignments o vehículo individual
+            const vehicleAssignments = (solicitud as any).vehicle_assignments || [];
+            const hasMultipleVehicles = vehicleAssignments.length > 0;
+
+            // Importar servicios
+            const { send_driver_solicitud_complete } = await import('@/email/index.email');
+
+            // Procesar vehículos y conductores
+            if (hasMultipleVehicles) {
+                // Múltiples vehículos
+                for (const assignment of vehicleAssignments) {
+                    const vehiculo = assignment.vehiculo_id;
+                    const conductor = assignment.conductor_id;
+
+                    if (!vehiculo || !conductor) continue;
+
+                    const vehiculoId = String(vehiculo._id || vehiculo);
+                    const conductorId = String(conductor._id || conductor);
+
+                    // Enviar manifiesto al conductor
+                    const driverEmail = (conductor as any).email;
+                    if (driverEmail) {
+                        try {
+                            const manifestPdf = await this.generate_passenger_manifest_pdf({
+                                solicitud_id,
+                                vehiculo_id: vehiculoId,
+                                conductor_id: conductorId,
+                                assigned_passengers: assignment.assigned_passengers
+                            });
+
+                            const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+                            // Asegurar que cliente_name sea el nombre del cliente y contacto sea el nombre del contacto
+                            const clienteNombre = client.name || 'N/A';
+                            const contactoNombre = (solicitud as any).contacto || (client.contacts && client.contacts.length > 0 ? client.contacts[0].name : 'N/A');
+                            const contactoTelefono = (solicitud as any).contacto_phone || (client.contacts && client.contacts.length > 0 ? client.contacts[0].phone : 'N/A');
+                            
+                            await send_driver_solicitud_complete({
+                                driver_name: (conductor as any).full_name || "",
+                                driver_email: driverEmail,
+                                solicitud_info: {
+                                    fecha: fechaFormatted,
+                                    hora_inicio: (solicitud as any).hora_inicio,
+                                    origen: (solicitud as any).origen,
+                                    destino: (solicitud as any).destino,
+                                    n_pasajeros: assignment.assigned_passengers || 0,
+                                    cliente_name: clienteNombre,
+                                    contacto: contactoNombre,
+                                    contacto_phone: contactoTelefono
+                                },
+                                passenger_manifest_pdf: manifestPdf
+                            });
+                        } catch (error) {
+                            console.error(`Error enviando correo al conductor ${conductorId}:`, error);
+                            throw error;
+                        }
+                    }
+                }
+            } else {
+                // Vehículo individual (compatibilidad)
+                const vehiculo = (solicitud as any).vehiculo_id;
+                const conductor = (solicitud as any).conductor;
+
+                if (!vehiculo || !conductor) {
+                    throw new ResponseError(400, "No hay vehículos o conductores asignados a esta solicitud");
+                }
+
+                const vehiculoId = String(vehiculo._id || vehiculo);
+                const conductorId = String(conductor._id || conductor);
+
+                // Enviar manifiesto al conductor
+                const driverEmail = (conductor as any).email;
+                if (driverEmail) {
+                    try {
+                        const manifestPdf = await this.generate_passenger_manifest_pdf({
+                            solicitud_id,
+                            vehiculo_id: vehiculoId,
+                            conductor_id: conductorId,
+                            assigned_passengers: (solicitud as any).n_pasajeros
+                        });
+
+                        const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+                        // Asegurar que cliente_name sea el nombre del cliente y contacto sea el nombre del contacto
+                        const clienteNombre = client.name || 'N/A';
+                        const contactoNombre = (solicitud as any).contacto || (client.contacts && client.contacts.length > 0 ? client.contacts[0].name : 'N/A');
+                        const contactoTelefono = (solicitud as any).contacto_phone || (client.contacts && client.contacts.length > 0 ? client.contacts[0].phone : 'N/A');
+                        
+                        await send_driver_solicitud_complete({
+                            driver_name: (conductor as any).full_name || "",
+                            driver_email: driverEmail,
+                            solicitud_info: {
+                                fecha: fechaFormatted,
+                                hora_inicio: (solicitud as any).hora_inicio,
+                                origen: (solicitud as any).origen,
+                                destino: (solicitud as any).destino,
+                                n_pasajeros: (solicitud as any).n_pasajeros || 0,
+                                cliente_name: clienteNombre,
+                                contacto: contactoNombre,
+                                contacto_phone: contactoTelefono
+                            },
+                            passenger_manifest_pdf: manifestPdf
+                        });
+                    } catch (error) {
+                        console.error(`Error enviando correo al conductor ${conductorId}:`, error);
+                        throw error;
+                    }
+                } else {
+                    throw new ResponseError(400, "El conductor asignado no tiene email registrado");
+                }
             }
         } catch (error) {
-            console.error("Error al enviar correos de solicitud completa:", error);
-            // No lanzar error, solo loguear
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al reenviar correos a los conductores");
+        }
+    }
+
+    /**
+     * Reenviar correo solo al cliente
+     * Envía al cliente: hojas de vida de conductores, SOATs, licencias, fichas técnicas de vehículos
+     */
+    public async resend_email_to_client({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }): Promise<void> {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('cliente', 'name email contacts phone')
+                .populate('conductor', 'full_name email')
+                .populate('vehiculo_id')
+                .populate('vehicle_assignments.vehiculo_id')
+                .populate('vehicle_assignments.conductor_id', 'full_name email')
+                .lean();
+
+            if (!solicitud) {
+                throw new ResponseError(404, "Solicitud no encontrada");
+            }
+
+            const client = (solicitud as any).cliente;
+            if (!client) {
+                throw new ResponseError(400, "No se pudo obtener la información del cliente");
+            }
+
+            // Obtener email del cliente
+            const clientEmail = client.email || (client.contacts && Array.isArray(client.contacts) && client.contacts.length > 0 ? client.contacts[0].email : null);
+            if (!clientEmail) {
+                throw new ResponseError(400, "El cliente no tiene email registrado");
+            }
+
+            const clientName = (client.contacts && Array.isArray(client.contacts) && client.contacts.length > 0) ? client.contacts[0].name : client.name;
+
+            // Determinar si hay vehicle_assignments o vehículo individual
+            const vehicleAssignments = (solicitud as any).vehicle_assignments || [];
+            const hasMultipleVehicles = vehicleAssignments.length > 0;
+
+            // Importar servicios
+            const { send_client_solicitud_complete } = await import('@/email/index.email');
+            const { UserService } = await import('@/services/users.service');
+            const { VehicleServices } = await import('@/services/vehicles.service');
+
+            const userService = new UserService();
+            const vehicleService = new VehicleServices();
+
+            // Preparar documentos para el cliente
+            const clientAttachments: Array<{ filename: string; buffer: Buffer }> = [];
+            const driverCvs: Array<{ filename: string; buffer: Buffer }> = [];
+            const vehicleTechnicalSheets: Array<{ filename: string; buffer: Buffer }> = [];
+
+            // Procesar vehículos y conductores
+            if (hasMultipleVehicles) {
+                // Múltiples vehículos
+                for (const assignment of vehicleAssignments) {
+                    const vehiculo = assignment.vehiculo_id;
+                    const conductor = assignment.conductor_id;
+
+                    if (!vehiculo || !conductor) continue;
+
+                    const vehiculoId = String(vehiculo._id || vehiculo);
+                    const conductorId = String(conductor._id || conductor);
+
+                    // Generar hoja de vida del conductor
+                    try {
+                        const driverCv = await userService.generate_driver_technical_sheet_pdf({
+                            driver_id: conductorId
+                        });
+                        // Cambiar el nombre del archivo a hoja_de_vida_conductor_{nombre}
+                        const conductorName = (conductor as any).full_name || 'conductor';
+                        const safeName = String(conductorName).replace(/[^a-zA-Z0-9_-]/g, "_");
+                        driverCvs.push({
+                            filename: `hoja_de_vida_conductor_${safeName}.pdf`,
+                            buffer: driverCv.buffer
+                        });
+                    } catch (error) {
+                        console.error(`Error generando hoja de vida del conductor ${conductorId}:`, error);
+                    }
+
+                    // Generar ficha técnica del vehículo
+                    try {
+                        const vehicleSheet = await vehicleService.generate_vehicle_technical_sheet_pdf({
+                            vehicle_id: vehiculoId
+                        });
+                        vehicleTechnicalSheets.push(vehicleSheet);
+                    } catch (error) {
+                        console.error(`Error generando ficha técnica del vehículo ${vehiculoId}:`, error);
+                    }
+
+                    // Generar PDFs de documentos del conductor (cédula y licencia)
+                    try {
+                        const conductorName = (conductor as any).full_name || 'conductor';
+                        const driverDocs = await this.get_driver_documents_as_buffers(conductorId, conductorName);
+                        clientAttachments.push(...driverDocs);
+                    } catch (error) {
+                        console.error(`Error generando documentos del conductor ${conductorId}:`, error);
+                    }
+
+                    // Descargar PDFs de documentos del vehículo (SOAT y licencia de tránsito)
+                    try {
+                        const vehicleDocs = await this.get_vehicle_documents_as_buffers(vehiculoId);
+                        clientAttachments.push(...vehicleDocs);
+                    } catch (error) {
+                        console.error(`Error descargando documentos del vehículo ${vehiculoId}:`, error);
+                    }
+                }
+            } else {
+                // Vehículo individual (compatibilidad)
+                const vehiculo = (solicitud as any).vehiculo_id;
+                const conductor = (solicitud as any).conductor;
+
+                if (!vehiculo || !conductor) {
+                    throw new ResponseError(400, "No hay vehículos o conductores asignados a esta solicitud");
+                }
+
+                const vehiculoId = String(vehiculo._id || vehiculo);
+                const conductorId = String(conductor._id || conductor);
+
+                // Generar hoja de vida del conductor
+                try {
+                    const driverCv = await userService.generate_driver_technical_sheet_pdf({
+                        driver_id: conductorId
+                    });
+                    driverCvs.push(driverCv);
+                } catch (error) {
+                    console.error(`Error generando hoja de vida del conductor ${conductorId}:`, error);
+                }
+
+                // Generar ficha técnica del vehículo
+                try {
+                    const vehicleSheet = await vehicleService.generate_vehicle_technical_sheet_pdf({
+                        vehicle_id: vehiculoId
+                    });
+                    vehicleTechnicalSheets.push(vehicleSheet);
+                } catch (error) {
+                    console.error(`Error generando ficha técnica del vehículo ${vehiculoId}:`, error);
+                }
+
+                // Generar PDFs de documentos del conductor (cédula y licencia)
+                try {
+                    const conductorName = (conductor as any).full_name || 'conductor';
+                    const driverDocs = await this.get_driver_documents_as_buffers(conductorId, conductorName);
+                    clientAttachments.push(...driverDocs);
+                } catch (error) {
+                    console.error(`Error generando documentos del conductor ${conductorId}:`, error);
+                }
+
+                // Descargar PDFs de documentos del vehículo (SOAT y licencia de tránsito)
+                try {
+                    const vehicleDocs = await this.get_vehicle_documents_as_buffers(vehiculoId);
+                    clientAttachments.push(...vehicleDocs);
+                } catch (error) {
+                    console.error(`Error descargando documentos del vehículo ${vehiculoId}:`, error);
+                }
+            }
+
+            // Combinar todos los documentos para el cliente
+            clientAttachments.push(...driverCvs);
+            clientAttachments.push(...vehicleTechnicalSheets);
+
+            // Generar PDF de información de solicitud
+            let solicitudInfoPdf: { filename: string; buffer: Buffer } | null = null;
+            try {
+                solicitudInfoPdf = await this.generate_solicitud_info_pdf({
+                    solicitud_id
+                });
+            } catch (error) {
+                console.error("Error generando PDF de información de solicitud:", error);
+            }
+
+            // Enviar correo al cliente con todos los documentos
+            const fechaFormatted = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+            
+            // Preparar lista de vehículos y conductores para el email
+            let vehiculosConductoresList: Array<{ placa: string; conductor: string; pasajeros: number }> = [];
+            if (hasMultipleVehicles) {
+                vehiculosConductoresList = vehicleAssignments.map((assignment: any) => ({
+                    placa: (assignment.vehiculo_id as any)?.placa || assignment.placa || 'N/A',
+                    conductor: (assignment.conductor_id as any)?.full_name || 'N/A',
+                    pasajeros: assignment.assigned_passengers || 0
+                }));
+            } else {
+                const vehiculo = (solicitud as any).vehiculo_id;
+                const conductor = (solicitud as any).conductor;
+                vehiculosConductoresList = [{
+                    placa: (vehiculo as any)?.placa || 'N/A',
+                    conductor: (conductor as any)?.full_name || 'N/A',
+                    pasajeros: (solicitud as any).n_pasajeros || 0
+                }];
+            }
+
+            // Generar HTML de la tabla de vehículos y conductores
+            const vehiculosTableHtml = vehiculosConductoresList.map((vc, idx) => 
+                `<tr>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${idx + 1}</td>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${vc.placa}</td>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${vc.conductor}</td>
+                    <td style="padding: 8px; text-align: left; border: 1px solid #ddd;">${vc.pasajeros}</td>
+                </tr>`
+            ).join('');
+
+            await send_client_solicitud_complete({
+                client_name: clientName,
+                client_email: clientEmail,
+                solicitud_info: {
+                    fecha: fechaFormatted,
+                    hora_inicio: (solicitud as any).hora_inicio,
+                    origen: (solicitud as any).origen,
+                    destino: (solicitud as any).destino,
+                    n_pasajeros: (solicitud as any).n_pasajeros || 0,
+                    vehiculos_table: vehiculosTableHtml || '<tr><td colspan="4" style="padding: 8px; text-align: left; border: 1px solid #ddd;">No hay vehículos asignados</td></tr>'
+                },
+                driver_cv_pdf: driverCvs, // Enviar todos los CVs
+                vehicle_technical_sheets_pdf: vehicleTechnicalSheets,
+                solicitud_info_pdf: solicitudInfoPdf || { filename: 'solicitud_info.pdf', buffer: Buffer.from('') },
+                // Agregar documentos adicionales (cédulas, licencias, SOATs, licencias de tránsito)
+                additional_attachments: clientAttachments.filter(att => 
+                    !driverCvs.some(cv => cv.filename === att.filename) &&
+                    !vehicleTechnicalSheets.some(vs => vs.filename === att.filename) &&
+                    att.filename !== (solicitudInfoPdf?.filename || 'solicitud_info.pdf')
+                )
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al reenviar correo al cliente");
         }
     }
 
@@ -3372,16 +4783,53 @@ export class SolicitudesService {
                 .populate('cliente', 'name contacts phone')
                 .populate('conductor', 'full_name')
                 .populate('vehiculo_id', 'placa type')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type')
+                .populate('vehicle_assignments.conductor_id', 'full_name')
                 .lean();
 
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
             const client = (solicitud as any).cliente;
-            const conductor = (solicitud as any).conductor;
-            const vehicle = (solicitud as any).vehiculo_id;
+            const vehicleAssignments = (solicitud as any).vehicle_assignments || [];
+            const hasMultipleVehicles = vehicleAssignments.length > 0;
 
             const fechaExpedicion = dayjs(new Date()).format("DD/MM/YYYY HH:mm");
             const fechaServicio = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+            const fechaFinal = dayjs((solicitud as any).fecha_final).format('DD/MM/YYYY');
+
+            // Generar tabla de vehículos y conductores
+            let vehiculosConductoresTable = '';
+            if (hasMultipleVehicles) {
+                vehiculosConductoresTable = vehicleAssignments.map((assignment: any, index: number) => {
+                    const vehiculo = assignment.vehiculo_id;
+                    const conductor = assignment.conductor_id;
+                    const placa = vehiculo?.placa || assignment.placa || 'N/A';
+                    const tipo = vehiculo?.type || 'N/A';
+                    const conductorName = conductor?.full_name || 'N/A';
+                    const pasajeros = assignment.assigned_passengers || 0;
+                    return `
+                        <tr>
+                            <td>${index + 1}</td>
+                            <td>${placa}</td>
+                            <td>${tipo}</td>
+                            <td>${conductorName}</td>
+                            <td>${pasajeros}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                const conductor = (solicitud as any).conductor;
+                const vehicle = (solicitud as any).vehiculo_id;
+                vehiculosConductoresTable = `
+                    <tr>
+                        <td>1</td>
+                        <td>${vehicle?.placa || 'N/A'}</td>
+                        <td>${vehicle?.type || 'N/A'}</td>
+                        <td>${(conductor as any)?.full_name || 'N/A'}</td>
+                        <td>${(solicitud as any).n_pasajeros || 0}</td>
+                    </tr>
+                `;
+            }
 
             // Crear HTML simple para el PDF
             const html = `
@@ -3393,29 +4841,42 @@ export class SolicitudesService {
                     <style>
                         body { font-family: Arial, sans-serif; padding: 20px; }
                         h1 { color: #333; }
+                        h2 { color: #555; margin-top: 30px; }
                         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
                         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-                        th { background-color: #f2f2f2; }
+                        th { background-color: #f2f2f2; font-weight: bold; }
                     </style>
                 </head>
                 <body>
                     <h1>Información de Solicitud de Servicio</h1>
                     <p><strong>Fecha de Expedición:</strong> ${fechaExpedicion}</p>
+                    
+                    <h2>Información General</h2>
                     <table>
                         <tr><th>Campo</th><th>Valor</th></tr>
                         <tr><td>HE</td><td>${(solicitud as any).he || 'N/A'}</td></tr>
-                        <tr><td>Fecha del Servicio</td><td>${fechaServicio}</td></tr>
+                        <tr><td>Fecha de Inicio</td><td>${fechaServicio}</td></tr>
+                        <tr><td>Fecha Final</td><td>${fechaFinal}</td></tr>
                         <tr><td>Hora de Inicio</td><td>${(solicitud as any).hora_inicio || 'N/A'}</td></tr>
                         <tr><td>Origen</td><td>${(solicitud as any).origen || 'N/A'}</td></tr>
                         <tr><td>Destino</td><td>${(solicitud as any).destino || 'N/A'}</td></tr>
                         <tr><td>N° Pasajeros</td><td>${(solicitud as any).n_pasajeros || 0}</td></tr>
-                        <tr><td>Cliente</td><td>${(client.contacts && client.contacts.length > 0) ? client.contacts[0].name : client.name}</td></tr>
-                        <tr><td>Contacto</td><td>${(solicitud as any).contacto || 'N/A'}</td></tr>
-                        <tr><td>Teléfono Contacto</td><td>${(solicitud as any).contacto_phone || 'N/A'}</td></tr>
-                        <tr><td>Vehículo</td><td>${vehicle?.placa || 'N/A'}</td></tr>
-                        <tr><td>Tipo Vehículo</td><td>${vehicle?.type || 'N/A'}</td></tr>
-                        <tr><td>Conductor</td><td>${(conductor as any)?.full_name || 'N/A'}</td></tr>
+                        <tr><td>Cliente</td><td>${client.name || 'N/A'}</td></tr>
+                        <tr><td>Contacto</td><td>${(solicitud as any).contacto || (client.contacts && client.contacts.length > 0 ? client.contacts[0].name : 'N/A')}</td></tr>
+                        <tr><td>Teléfono Contacto</td><td>${(solicitud as any).contacto_phone || (client.contacts && client.contacts.length > 0 ? client.contacts[0].phone : 'N/A')}</td></tr>
                         ${(solicitud as any).novedades ? `<tr><td>Novedades</td><td>${(solicitud as any).novedades}</td></tr>` : ''}
+                    </table>
+
+                    <h2>Vehículos y Conductores Asignados</h2>
+                    <table>
+                        <tr>
+                            <th>#</th>
+                            <th>Placa</th>
+                            <th>Tipo</th>
+                            <th>Conductor</th>
+                            <th>Pasajeros</th>
+                        </tr>
+                        ${vehiculosConductoresTable}
                     </table>
                 </body>
                 </html>
@@ -3427,6 +4888,137 @@ export class SolicitudesService {
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "Error al generar PDF de información de solicitud");
+        }
+    }
+
+    /**
+     * Generar PDF de prefactura
+     */
+    public async generate_prefactura_pdf({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }): Promise<{ filename: string; buffer: Buffer }> {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate({
+                    path: 'cliente',
+                    select: 'name contacts phone email company_id',
+                    populate: {
+                        path: 'company_id',
+                        select: 'company_name document logo'
+                    }
+                })
+                .populate('conductor', 'full_name')
+                .populate('vehiculo_id', 'placa type')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type')
+                .populate('vehicle_assignments.conductor_id', 'full_name')
+                .lean();
+
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar que existe una prefactura generada
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            const client = (solicitud as any).cliente;
+            const conductor = (solicitud as any).conductor;
+            const vehicle = (solicitud as any).vehiculo_id;
+
+            if (!client) {
+                throw new ResponseError(400, "No se pudo obtener la información del cliente");
+            }
+
+            // Obtener la compañía desde el cliente populado
+            const company = (client as any)?.company_id;
+
+            const fechaExpedicion = dayjs(new Date()).format("DD/MM/YYYY");
+            const fechaServicio = dayjs((solicitud as any).fecha).format('DD/MM/YYYY');
+            const fechaFinal = dayjs((solicitud as any).fecha_final).format('DD/MM/YYYY');
+            const prefacturaNumero = (solicitud as any).prefactura.numero;
+            const nit = company?.document?.number
+                ? `${company.document.number}${company.document.dv ? "-" + company.document.dv : ""}`
+                : "";
+
+            // Formatear valores monetarios
+            const formatCurrency = (value: number) => {
+                return new Intl.NumberFormat('es-CO', {
+                    style: 'currency',
+                    currency: 'COP',
+                    minimumFractionDigits: 0
+                }).format(value || 0);
+            };
+
+            // Preparar variables para el template
+            // cliente_name debe ser el nombre del cliente (empresa), contacto debe ser el nombre del contacto (persona)
+            const clienteName = client?.name || 'N/A';
+            const contactoNombre = (solicitud as any).contacto || (client?.contacts && client.contacts.length > 0 ? client.contacts[0].name : 'N/A');
+            const contactoTelefono = (solicitud as any).contacto_phone || (client?.contacts && client.contacts.length > 0 ? client.contacts[0].phone : 'N/A');
+            const clienteEmail = client?.email || 'N/A';
+            const novedadesSection = (solicitud as any).novedades 
+                ? `<div class="info-section"><h3>Novedades</h3><p>${String((solicitud as any).novedades).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p></div>`
+                : '';
+
+            // Generar tabla de vehículos y conductores
+            let vehiculosTableRows = '';
+            const vehicleAssignments = (solicitud as any).vehicle_assignments || [];
+            
+            if (vehicleAssignments.length > 0) {
+                // Usar vehicle_assignments si existe
+                vehiculosTableRows = vehicleAssignments.map((assignment: any) => {
+                    const vehiculo = assignment.vehiculo_id;
+                    const conductor = assignment.conductor_id;
+                    const placa = vehiculo?.placa || assignment.placa || 'N/A';
+                    const conductorName = conductor?.full_name || 'N/A';
+                    const pasajeros = assignment.assigned_passengers || 0;
+                    return `<tr><td>${placa}</td><td>${conductorName}</td><td>${pasajeros}</td></tr>`;
+                }).join('');
+            } else if (vehicle && conductor) {
+                // Fallback: usar vehículo y conductor individuales si no hay vehicle_assignments
+                const placa = vehicle?.placa || 'N/A';
+                const conductorName = (conductor as any)?.full_name || 'N/A';
+                const pasajeros = (solicitud as any).n_pasajeros || 0;
+                vehiculosTableRows = `<tr><td>${placa}</td><td>${conductorName}</td><td>${pasajeros}</td></tr>`;
+            } else {
+                vehiculosTableRows = '<tr><td colspan="3">No hay vehículos asignados</td></tr>';
+            }
+
+            // Leer template HTML
+            const templatePath = this.resolveTemplatePath("prefactura.html");
+            if (!fs.existsSync(templatePath)) {
+                throw new ResponseError(500, `Template de prefactura no encontrado en: ${templatePath}`);
+            }
+            
+            const htmlTemplate = fs.readFileSync(templatePath, "utf8");
+            const html = this.replaceVariables(htmlTemplate, {
+                prefactura_numero: String(prefacturaNumero || 'N/A'),
+                company_name: String(company?.company_name || 'Empresa'),
+                company_nit: String(nit || 'N/A'),
+                cliente_name: String(clienteName), // Nombre del cliente (empresa)
+                contacto: String(contactoNombre), // Nombre del contacto (persona)
+                contacto_phone: String(contactoTelefono),
+                cliente_email: String(clienteEmail),
+                he: String((solicitud as any).he || 'N/A'),
+                fecha_inicio: fechaServicio,
+                fecha_final: fechaFinal,
+                hora_inicio: String((solicitud as any).hora_inicio || 'N/A'),
+                origen: String((solicitud as any).origen || 'N/A'),
+                destino: String((solicitud as any).destino || 'N/A'),
+                n_pasajeros: String((solicitud as any).n_pasajeros || 0),
+                vehiculos_table: vehiculosTableRows,
+                valor_a_facturar: formatCurrency((solicitud as any).valor_a_facturar || 0),
+                novedades_section: novedadesSection,
+                fecha_expedicion: fechaExpedicion
+            });
+
+            const pdfBuffer = await renderHtmlToPdfBuffer(html);
+            const filename = `prefactura_${prefacturaNumero}_${dayjs().format("YYYYMMDD_HHmm")}.pdf`;
+            return { filename, buffer: pdfBuffer };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            console.error("Error al generar PDF de prefactura:", error);
+            throw new ResponseError(500, `Error al generar PDF de prefactura: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -3517,23 +5109,671 @@ export class SolicitudesService {
     //* #========== PRIVATE METHODS ==========#
 
     /**
-     * Calcular diferencia de horas entre hora_inicio y hora_final
-     * Formato esperado: "HH:MM" o "HH:MM:SS"
+     * Calcular diferencia de horas entre fecha/hora_inicio y fecha_final/hora_final
+     * Considera días completos entre las fechas
+     * Formato esperado para horas: "HH:MM" o "HH:MM:SS"
      */
-    private calculate_hours(hora_inicio: string, hora_final: string): number {
+    private calculate_hours(
+        fecha_inicio: Date, 
+        hora_inicio: string, 
+        fecha_final: Date, 
+        hora_final: string
+    ): number {
         try {
+            // Parsear horas
             const [h1, m1] = hora_inicio.split(':').map(Number);
             const [h2, m2] = hora_final.split(':').map(Number);
 
-            const inicio = h1 * 60 + m1;
-            const final = h2 * 60 + m2;
+            // Crear objetos Date completos con fecha y hora
+            const inicio_completo = new Date(fecha_inicio);
+            inicio_completo.setHours(h1, m1 || 0, 0, 0);
 
-            const diff_minutes = final - inicio;
-            const hours = diff_minutes / 60;
+            const final_completo = new Date(fecha_final);
+            final_completo.setHours(h2, m2 || 0, 0, 0);
 
-            return Math.round(hours * 100) / 100; // Redondear a 2 decimales
+            // Calcular diferencia en milisegundos
+            const diff_ms = final_completo.getTime() - inicio_completo.getTime();
+
+            // Convertir a horas
+            const hours = diff_ms / (1000 * 60 * 60);
+
+            // Redondear a 2 decimales
+            return Math.round(hours * 100) / 100;
         } catch (error) {
+            console.error("Error al calcular horas:", error);
             return 0;
+        }
+    }
+
+    /**
+     * Procesa un archivo Excel con gastos operacionales y los registra automáticamente
+     * Formato Excel esperado:
+     * - Columna A: Tipo de Gasto (fuel, tolls, repairs, fines, parking_lot)
+     * - Columna B: Valor (número)
+     * - Columna C: Descripción (texto)
+     * - Columna D: Placa del Vehículo (texto)
+     * 
+     * @param solicitud_id ID de la solicitud
+     * @param excelFile Archivo Excel subido
+     * @param user_id ID del usuario que sube el archivo
+     */
+    public async process_operational_bills_excel({
+        solicitud_id,
+        excelFile,
+        user_id
+    }: {
+        solicitud_id: string;
+        excelFile: Express.Multer.File;
+        user_id: string;
+    }) {
+        try {
+            // Validar que la solicitud exista
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) {
+                throw new ResponseError(404, "Solicitud no encontrada");
+            }
+
+            // Leer el archivo Excel
+            const workbook = XLSX.read(excelFile.buffer, { type: 'buffer' });
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+
+            // Convertir a JSON
+            const data = XLSX.utils.sheet_to_json(worksheet, { 
+                header: ['tipo_gasto', 'valor', 'descripcion', 'placa'],
+                defval: null,
+                raw: false
+            });
+
+            // Validar que haya datos
+            if (!data || data.length === 0) {
+                throw new ResponseError(400, "El archivo Excel está vacío o no tiene datos válidos");
+            }
+
+            // Validar encabezados (primera fila puede ser encabezado)
+            const firstRow = data[0] as any;
+            const hasHeaders = firstRow.tipo_gasto && 
+                (firstRow.tipo_gasto.toString().toLowerCase().includes('tipo') || 
+                 firstRow.tipo_gasto.toString().toLowerCase().includes('gasto'));
+
+            // Filtrar filas de encabezado y vacías
+            const validRows = data.filter((row: any, index: number) => {
+                if (index === 0 && hasHeaders) return false; // Saltar encabezado
+                if (!row.tipo_gasto || !row.valor || !row.placa) return false; // Filas incompletas
+                return true;
+            });
+
+            if (validRows.length === 0) {
+                throw new ResponseError(400, "No se encontraron filas válidas con datos en el Excel");
+            }
+
+            // Tipos de gasto válidos
+            const validTypes = ['fuel', 'tolls', 'repairs', 'fines', 'parking_lot'];
+
+            // Agrupar gastos por placa (vehículo)
+            const gastosPorPlaca: { [placa: string]: Array<{
+                type_bill: "fuel" | "tolls" | "repairs" | "fines" | "parking_lot";
+                value: number;
+                description: string;
+            }> } = {};
+
+            // Procesar cada fila
+            for (const row of validRows) {
+                const rowData = row as { tipo_gasto?: any; valor?: any; descripcion?: any; placa?: any };
+                const tipoGasto = String(rowData.tipo_gasto || '').trim().toLowerCase();
+                const valorStr = String(rowData.valor || '').trim();
+                const descripcion = String(rowData.descripcion || '').trim();
+                const placa = String(rowData.placa || '').trim().toUpperCase();
+
+                // Validar tipo de gasto
+                if (!validTypes.includes(tipoGasto)) {
+                    throw new ResponseError(400, `Tipo de gasto inválido: "${tipoGasto}". Valores válidos: ${validTypes.join(', ')}`);
+                }
+
+                // Validar y convertir valor
+                const valor = parseFloat(valorStr);
+                if (isNaN(valor) || valor <= 0) {
+                    throw new ResponseError(400, `Valor inválido: "${valorStr}" en la fila con placa "${placa}"`);
+                }
+
+                // Validar placa
+                if (!placa || placa.length === 0) {
+                    throw new ResponseError(400, "Placa del vehículo es requerida");
+                }
+
+                // Agrupar por placa
+                if (!gastosPorPlaca[placa]) {
+                    gastosPorPlaca[placa] = [];
+                }
+
+                gastosPorPlaca[placa].push({
+                    type_bill: tipoGasto as "fuel" | "tolls" | "repairs" | "fines" | "parking_lot",
+                    value: valor,
+                    description: descripcion
+                });
+            }
+
+            // Buscar vehículos por placa y crear registros de gastos operacionales
+            const resultados: Array<{
+                placa: string;
+                vehiculo_id?: string;
+                gastos_registrados: number;
+                error?: string;
+            }> = [];
+
+            for (const [placa, gastos] of Object.entries(gastosPorPlaca)) {
+                try {
+                    // Buscar vehículo por placa
+                    const vehiculo = await vehicleModel.findOne({ placa: placa }).lean();
+                    
+                    if (!vehiculo) {
+                        resultados.push({
+                            placa,
+                            gastos_registrados: 0,
+                            error: `Vehículo con placa "${placa}" no encontrado`
+                        });
+                        continue;
+                    }
+
+                    const vehiculo_id = String(vehiculo._id);
+
+                    // Crear registro de gastos operacionales usando el servicio de vehículos
+                    const vehicleServices = new VehicleServices();
+                    await vehicleServices.create_operational_bills({
+                        vehicle_id: vehiculo_id,
+                        user_id: user_id,
+                        solicitud_id: solicitud_id,
+                        bills: gastos.map(g => ({
+                            type_bill: g.type_bill,
+                            value: g.value,
+                            description: g.description,
+                            media_support: [] as Express.Multer.File[] // Sin archivos de soporte desde Excel
+                        }))
+                    });
+
+                    resultados.push({
+                        placa,
+                        vehiculo_id,
+                        gastos_registrados: gastos.length
+                    });
+                } catch (error) {
+                    resultados.push({
+                        placa,
+                        gastos_registrados: 0,
+                        error: error instanceof Error ? error.message : "Error desconocido"
+                    });
+                }
+            }
+
+            // Guardar auditoría de subida de operacionales
+            const solicitudToUpdate = await solicitudModel.findById(solicitud_id);
+            if (solicitudToUpdate && user_id) {
+                (solicitudToUpdate as any).uploaded_operationals_by = user_id;
+                (solicitudToUpdate as any).uploaded_operationals_at = new Date();
+                (solicitudToUpdate as any).last_modified_by = user_id;
+                await solicitudToUpdate.save();
+            }
+
+            // Recalcular liquidación automáticamente
+            try {
+                await this.calcular_liquidacion({ solicitud_id });
+                await this.update_accounting_status_on_operational_upload({ solicitud_id });
+            } catch (calcError) {
+                console.error("Error al recalcular liquidación después de subir Excel:", calcError);
+                // No lanzar error, solo loguear
+            }
+
+            // Verificar si hubo errores
+            const errores = resultados.filter(r => r.error);
+            const exitosos = resultados.filter(r => !r.error);
+
+            return {
+                message: `Procesamiento completado: ${exitosos.length} vehículo(s) procesado(s) exitosamente, ${errores.length} error(es)`,
+                total_vehiculos: resultados.length,
+                exitosos: exitosos.length,
+                errores: errores.length,
+                detalles: resultados
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, `Error al procesar archivo Excel: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+        }
+    }
+
+    /**
+     * Exportar solicitudes a Excel
+     * @param bitacora_id Opcional: si se proporciona, exporta solo las solicitudes de esa bitácora
+     * @param filters Filtros opcionales para las solicitudes
+     */
+    public async export_solicitudes_to_excel({
+        bitacora_id,
+        filters = {}
+    }: {
+        bitacora_id?: string;
+        filters?: {
+            cliente_id?: string;
+            conductor_id?: string;
+            vehiculo_id?: string;
+            status?: "pending" | "accepted" | "rejected";
+            service_status?: "pendiente_de_asignacion" | "not-started" | "started" | "finished" | "sin_asignacion";
+            empresa?: "travel" | "national";
+            fecha_inicio?: Date;
+            fecha_fin?: Date;
+        };
+    }): Promise<Buffer> {
+        try {
+            const query: any = {};
+
+            // Si se proporciona bitacora_id, filtrar por esa bitácora
+            if (bitacora_id) {
+                query.bitacora_id = bitacora_id;
+            }
+
+            // Aplicar otros filtros
+            if (filters.cliente_id) query.cliente = filters.cliente_id;
+            if (filters.conductor_id) query.conductor = filters.conductor_id;
+            if (filters.vehiculo_id) query.vehiculo_id = filters.vehiculo_id;
+            if (filters.status) query.status = filters.status;
+            if (filters.service_status) query.service_status = filters.service_status;
+            if (filters.empresa) query.empresa = filters.empresa;
+
+            // Filtro por rango de fechas
+            if (filters.fecha_inicio || filters.fecha_fin) {
+                query.fecha = {};
+                if (filters.fecha_inicio) query.fecha.$gte = filters.fecha_inicio;
+                if (filters.fecha_fin) query.fecha.$lte = filters.fecha_fin;
+            }
+
+            // Obtener todas las solicitudes (sin paginación para exportación)
+            const solicitudes = await solicitudModel
+                .find(query)
+                .populate('cliente', 'name email documento_tipo documento_numero')
+                .populate('vehiculo_id', 'placa type name')
+                .populate('conductor', 'full_name document email')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type name')
+                .populate('vehicle_assignments.conductor_id', 'full_name document email')
+                .populate('created_by', 'full_name email')
+                .populate('approved_by', 'full_name email')
+                .populate('assigned_vehicles_by', 'full_name email')
+                .populate('assigned_costs_by', 'full_name email')
+                .populate('assigned_sales_by', 'full_name email')
+                .populate('generated_prefactura_by', 'full_name email')
+                .populate('generated_factura_by', 'full_name email')
+                .sort({ created: -1 })
+                .lean();
+
+            // Preparar datos para Excel
+            const excelData: any[] = [];
+
+            // Encabezados
+            excelData.push([
+                'HE',
+                'Empresa',
+                'Fecha',
+                'Fecha Final',
+                'Hora Inicio',
+                'Hora Final',
+                'Total Horas',
+                'Cliente',
+                'Cliente Email',
+                'Cliente Documento Tipo',
+                'Cliente Documento Número',
+                'Contacto',
+                'Contacto Teléfono',
+                'Origen',
+                'Destino',
+                'N° Pasajeros',
+                'Placa',
+                'Tipo Vehículo',
+                'Conductor',
+                'Conductor Teléfono',
+                'Estado',
+                'Estado Servicio',
+                'Valor Cancelado',
+                'Valor a Facturar',
+                'Utilidad',
+                '% Utilidad',
+                'Total Gastos Operacionales',
+                'N° Factura',
+                'Fecha Factura',
+                'N° Prefactura',
+                'Fecha Prefactura',
+                'Estado Prefactura',
+                'Creado Por',
+                'Fecha Creación',
+                'Aprobado Por',
+                'Fecha Aprobación',
+                'Asignado Vehículos Por',
+                'Fecha Asignación Vehículos',
+                'Asignado Costos Por',
+                'Fecha Asignación Costos',
+                'Asignado Ventas Por',
+                'Fecha Asignación Ventas',
+                'Generado Prefactura Por',
+                'Fecha Generación Prefactura',
+                'Generado Factura Por',
+                'Fecha Generación Factura'
+            ]);
+
+            // Procesar cada solicitud
+            for (const solicitud of solicitudes) {
+                const sol = solicitud as any;
+
+                // Si tiene vehicle_assignments, crear una fila por cada vehículo
+                if (sol.vehicle_assignments && sol.vehicle_assignments.length > 0) {
+                    for (const assignment of sol.vehicle_assignments) {
+                        excelData.push([
+                            sol.he || '',
+                            sol.empresa || '',
+                            sol.fecha ? dayjs(sol.fecha).format('DD/MM/YYYY') : '',
+                            sol.fecha_final ? dayjs(sol.fecha_final).format('DD/MM/YYYY') : '',
+                            sol.hora_inicio || '',
+                            sol.hora_final || '',
+                            sol.total_horas || 0,
+                            sol.cliente?.name || '',
+                            sol.cliente?.email || '',
+                            sol.cliente?.documento_tipo || '',
+                            sol.cliente?.documento_numero || '',
+                            sol.contacto || '',
+                            sol.contacto_phone || '',
+                            sol.origen || '',
+                            sol.destino || '',
+                            assignment.assigned_passengers || sol.n_pasajeros || 0,
+                            assignment.placa || (assignment.vehiculo_id?.placa) || '',
+                            assignment.vehiculo_id?.type || '',
+                            assignment.conductor_id?.full_name || '',
+                            assignment.conductor_phone || (assignment.conductor_id?.contact) || '',
+                            sol.status || '',
+                            sol.service_status || '',
+                            sol.valor_cancelado || 0,
+                            sol.valor_a_facturar || 0,
+                            sol.utilidad || 0,
+                            sol.porcentaje_utilidad || 0,
+                            sol.total_gastos_operacionales || 0,
+                            sol.n_factura || '',
+                            sol.fecha_factura ? dayjs(sol.fecha_factura).format('DD/MM/YYYY') : '',
+                            sol.prefactura?.numero || '',
+                            sol.prefactura?.fecha ? dayjs(sol.prefactura.fecha).format('DD/MM/YYYY') : '',
+                            sol.prefactura?.estado || '',
+                            sol.created_by?.full_name || '',
+                            sol.created ? dayjs(sol.created).format('DD/MM/YYYY HH:mm') : '',
+                            sol.approved_by?.full_name || '',
+                            sol.approved_at ? dayjs(sol.approved_at).format('DD/MM/YYYY HH:mm') : '',
+                            sol.assigned_vehicles_by?.full_name || '',
+                            sol.assigned_vehicles_at ? dayjs(sol.assigned_vehicles_at).format('DD/MM/YYYY HH:mm') : '',
+                            sol.assigned_costs_by?.full_name || '',
+                            sol.assigned_costs_at ? dayjs(sol.assigned_costs_at).format('DD/MM/YYYY HH:mm') : '',
+                            sol.assigned_sales_by?.full_name || '',
+                            sol.assigned_sales_at ? dayjs(sol.assigned_sales_at).format('DD/MM/YYYY HH:mm') : '',
+                            sol.generated_prefactura_by?.full_name || '',
+                            sol.generated_prefactura_at ? dayjs(sol.generated_prefactura_at).format('DD/MM/YYYY HH:mm') : '',
+                            sol.generated_factura_by?.full_name || '',
+                            sol.generated_factura_at ? dayjs(sol.generated_factura_at).format('DD/MM/YYYY HH:mm') : ''
+                        ]);
+                    }
+                } else {
+                    // Solicitud con un solo vehículo (campos individuales)
+                    excelData.push([
+                        sol.he || '',
+                        sol.empresa || '',
+                        sol.fecha ? dayjs(sol.fecha).format('DD/MM/YYYY') : '',
+                        sol.fecha_final ? dayjs(sol.fecha_final).format('DD/MM/YYYY') : '',
+                        sol.hora_inicio || '',
+                        sol.hora_final || '',
+                        sol.total_horas || 0,
+                        sol.cliente?.name || '',
+                        sol.cliente?.email || '',
+                        sol.cliente?.documento_tipo || '',
+                        sol.cliente?.documento_numero || '',
+                        sol.contacto || '',
+                        sol.contacto_phone || '',
+                        sol.origen || '',
+                        sol.destino || '',
+                        sol.n_pasajeros || 0,
+                        sol.placa || (sol.vehiculo_id?.placa) || '',
+                        sol.tipo_vehiculo || (sol.vehiculo_id?.type) || '',
+                        sol.conductor?.full_name || '',
+                        sol.conductor_phone || (sol.conductor?.contact) || '',
+                        sol.status || '',
+                        sol.service_status || '',
+                        sol.valor_cancelado || 0,
+                        sol.valor_a_facturar || 0,
+                        sol.utilidad || 0,
+                        sol.porcentaje_utilidad || 0,
+                        sol.total_gastos_operacionales || 0,
+                        sol.n_factura || '',
+                        sol.fecha_factura ? dayjs(sol.fecha_factura).format('DD/MM/YYYY') : '',
+                        sol.prefactura?.numero || '',
+                        sol.prefactura?.fecha ? dayjs(sol.prefactura.fecha).format('DD/MM/YYYY') : '',
+                        sol.prefactura?.estado || '',
+                        sol.created_by?.full_name || '',
+                        sol.created ? dayjs(sol.created).format('DD/MM/YYYY HH:mm') : '',
+                        sol.approved_by?.full_name || '',
+                        sol.approved_at ? dayjs(sol.approved_at).format('DD/MM/YYYY HH:mm') : '',
+                        sol.assigned_vehicles_by?.full_name || '',
+                        sol.assigned_vehicles_at ? dayjs(sol.assigned_vehicles_at).format('DD/MM/YYYY HH:mm') : '',
+                        sol.assigned_costs_by?.full_name || '',
+                        sol.assigned_costs_at ? dayjs(sol.assigned_costs_at).format('DD/MM/YYYY HH:mm') : '',
+                        sol.assigned_sales_by?.full_name || '',
+                        sol.assigned_sales_at ? dayjs(sol.assigned_sales_at).format('DD/MM/YYYY HH:mm') : '',
+                        sol.generated_prefactura_by?.full_name || '',
+                        sol.generated_prefactura_at ? dayjs(sol.generated_prefactura_at).format('DD/MM/YYYY HH:mm') : '',
+                        sol.generated_factura_by?.full_name || '',
+                        sol.generated_factura_at ? dayjs(sol.generated_factura_at).format('DD/MM/YYYY HH:mm') : ''
+                    ]);
+                }
+            }
+
+            // Crear workbook
+            const workbook = XLSX.utils.book_new();
+            const worksheet = XLSX.utils.aoa_to_sheet(excelData);
+
+            // Ajustar ancho de columnas
+            worksheet['!cols'] = [
+                { wch: 12 }, // HE
+                { wch: 10 }, // Empresa
+                { wch: 12 }, // Fecha
+                { wch: 12 }, // Fecha Final
+                { wch: 10 }, // Hora Inicio
+                { wch: 10 }, // Hora Final
+                { wch: 12 }, // Total Horas
+                { wch: 25 }, // Cliente
+                { wch: 25 }, // Cliente Email
+                { wch: 15 }, // Cliente Documento Tipo
+                { wch: 18 }, // Cliente Documento Número
+                { wch: 20 }, // Contacto
+                { wch: 15 }, // Contacto Teléfono
+                { wch: 25 }, // Origen
+                { wch: 25 }, // Destino
+                { wch: 12 }, // N° Pasajeros
+                { wch: 10 }, // Placa
+                { wch: 15 }, // Tipo Vehículo
+                { wch: 25 }, // Conductor
+                { wch: 15 }, // Conductor Teléfono
+                { wch: 12 }, // Estado
+                { wch: 20 }, // Estado Servicio
+                { wch: 15 }, // Valor Cancelado
+                { wch: 15 }, // Valor a Facturar
+                { wch: 12 }, // Utilidad
+                { wch: 12 }, // % Utilidad
+                { wch: 20 }, // Total Gastos Operacionales
+                { wch: 15 }, // N° Factura
+                { wch: 12 }, // Fecha Factura
+                { wch: 15 }, // N° Prefactura
+                { wch: 12 }, // Fecha Prefactura
+                { wch: 15 }, // Estado Prefactura
+                { wch: 20 }, // Creado Por
+                { wch: 18 }, // Fecha Creación
+                { wch: 20 }, // Aprobado Por
+                { wch: 18 }, // Fecha Aprobación
+                { wch: 20 }, // Asignado Vehículos Por
+                { wch: 18 }, // Fecha Asignación Vehículos
+                { wch: 20 }, // Asignado Costos Por
+                { wch: 18 }, // Fecha Asignación Costos
+                { wch: 20 }, // Asignado Ventas Por
+                { wch: 18 }, // Fecha Asignación Ventas
+                { wch: 20 }, // Generado Prefactura Por
+                { wch: 18 }, // Fecha Generación Prefactura
+                { wch: 20 }, // Generado Factura Por
+                { wch: 18 }  // Fecha Generación Factura
+            ];
+
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Solicitudes');
+
+            // Generar buffer
+            const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+            return excelBuffer;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, `Error al exportar solicitudes a Excel: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+        }
+    }
+
+    /**
+     * Aprobar prefactura por el cliente
+     * SOLO el cliente asociado a la solicitud puede aprobar la prefactura
+     */
+    public async client_approve_prefactura({
+        solicitud_id,
+        client_id,
+        notas
+    }: {
+        solicitud_id: string;
+        client_id: string;
+        notas?: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar que el cliente autenticado es el cliente asociado a la solicitud
+            if (String(solicitud.cliente) !== String(client_id)) {
+                throw new ResponseError(403, "No tiene permiso para aprobar esta prefactura. Solo el cliente asociado a la solicitud puede aprobarla.");
+            }
+
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            // Validar que la prefactura haya sido enviada al cliente
+            if (!(solicitud as any).prefactura?.enviada_al_cliente) {
+                throw new ResponseError(400, "La prefactura aún no ha sido enviada al cliente");
+            }
+
+            // Validar que no esté ya aprobada
+            if ((solicitud as any).prefactura?.estado === "aceptada") {
+                throw new ResponseError(400, "La prefactura ya fue aprobada");
+            }
+
+            // Aprobar prefactura
+            (solicitud as any).prefactura.estado = "aceptada";
+            (solicitud as any).prefactura.aprobada = true;
+            (solicitud as any).prefactura.aprobada_por = client_id; // Guardar que el cliente la aprobó
+            (solicitud as any).prefactura.aprobada_fecha = new Date();
+            if (notas) {
+                (solicitud as any).prefactura.notas = notas;
+            }
+
+            // Actualizar historial
+            if (!(solicitud as any).prefactura.historial_envios) {
+                (solicitud as any).prefactura.historial_envios = [];
+            }
+            (solicitud as any).prefactura.historial_envios.push({
+                fecha: new Date(),
+                estado: "aceptada",
+                enviado_por: client_id,
+                notas: notas || undefined
+            });
+
+            // Automáticamente marcar como listo para facturación
+            (solicitud as any).accounting_status = "listo_para_facturacion";
+            (solicitud as any).last_modified_by = client_id;
+
+            await solicitud.save();
+
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
+            return {
+                message: "Prefactura aprobada exitosamente",
+                solicitud: solicitudObj
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al aprobar prefactura");
+        }
+    }
+
+    /**
+     * Rechazar prefactura por el cliente
+     * SOLO el cliente asociado a la solicitud puede rechazar la prefactura
+     */
+    public async client_reject_prefactura({
+        solicitud_id,
+        client_id,
+        notas
+    }: {
+        solicitud_id: string;
+        client_id: string;
+        notas?: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Validar que el cliente autenticado es el cliente asociado a la solicitud
+            if (String(solicitud.cliente) !== String(client_id)) {
+                throw new ResponseError(403, "No tiene permiso para rechazar esta prefactura. Solo el cliente asociado a la solicitud puede rechazarla.");
+            }
+
+            if (!(solicitud as any).prefactura?.numero) {
+                throw new ResponseError(400, "No existe una prefactura generada para esta solicitud");
+            }
+
+            // Validar que la prefactura haya sido enviada al cliente
+            if (!(solicitud as any).prefactura?.enviada_al_cliente) {
+                throw new ResponseError(400, "La prefactura aún no ha sido enviada al cliente");
+            }
+
+            // Rechazar prefactura
+            (solicitud as any).prefactura.estado = "rechazada";
+            (solicitud as any).prefactura.aprobada = false;
+            (solicitud as any).prefactura.rechazada_por = client_id;
+            (solicitud as any).prefactura.rechazada_fecha = new Date();
+            if (notas) {
+                (solicitud as any).prefactura.notas = notas;
+            }
+
+            // Actualizar historial
+            if (!(solicitud as any).prefactura.historial_envios) {
+                (solicitud as any).prefactura.historial_envios = [];
+            }
+            (solicitud as any).prefactura.historial_envios.push({
+                fecha: new Date(),
+                estado: "rechazada",
+                enviado_por: client_id,
+                notas: notas || undefined
+            });
+
+            // Volver a estado de operacional completo para que se pueda regenerar la prefactura
+            (solicitud as any).accounting_status = "operacional_completo";
+            (solicitud as any).last_modified_by = client_id;
+
+            await solicitud.save();
+
+            // Populizar IDs de prefactura antes de retornar
+            const solicitudObj = solicitud.toObject();
+            await this.populate_prefactura_ids(solicitudObj);
+
+            return {
+                message: "Prefactura rechazada",
+                solicitud: solicitudObj
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al rechazar prefactura");
         }
     }
 }

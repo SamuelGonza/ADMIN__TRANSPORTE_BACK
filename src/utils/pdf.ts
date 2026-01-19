@@ -71,4 +71,94 @@ export async function renderHtmlToPdfBuffer(html: string): Promise<Buffer> {
     }
 }
 
+/**
+ * Convierte un PDF a imagen base64 usando puppeteer
+ * @param pdfUrl URL del PDF a convertir
+ * @returns Base64 string de la imagen o null si hay error
+ */
+export async function convertPdfToImageBase64(pdfUrl: string): Promise<string | null> {
+    const executablePath = findExistingExecutable();
+    const browser = await puppeteer.launch({
+        headless: true,
+        executablePath,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-web-security"
+        ]
+    });
+
+    try {
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1200, height: 1600 });
+        
+        // Navegar directamente al PDF
+        await page.goto(pdfUrl, { 
+            waitUntil: "networkidle0", 
+            timeout: 30000 
+        });
+        
+        // Esperar a que el PDF se renderice completamente
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Tomar screenshot de la página completa
+        const screenshot = await page.screenshot({
+            type: 'png',
+            fullPage: true
+        });
+
+        const base64 = Buffer.from(screenshot).toString('base64');
+        return `data:image/png;base64,${base64}`;
+    } catch (error) {
+        console.error("Error convirtiendo PDF a imagen:", error);
+        // Intentar método alternativo con embed
+        try {
+            const page = await browser.newPage();
+            await page.setViewport({ width: 1200, height: 1600 });
+            
+            const html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <style>
+                        body {
+                            margin: 0;
+                            padding: 0;
+                            background: white;
+                            overflow: hidden;
+                        }
+                        embed {
+                            width: 100%;
+                            height: 100vh;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <embed src="${pdfUrl}" type="application/pdf" />
+                </body>
+                </html>
+            `;
+            
+            await page.setContent(html, { waitUntil: "networkidle0", timeout: 30000 });
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            const screenshot = await page.screenshot({
+                type: 'png',
+                fullPage: true
+            });
+            
+            const base64 = Buffer.from(screenshot).toString('base64');
+            return `data:image/png;base64,${base64}`;
+        } catch (fallbackError) {
+            console.error("Error en método alternativo:", fallbackError);
+            return null;
+        }
+    } finally {
+        await browser.close();
+    }
+}
+
 
