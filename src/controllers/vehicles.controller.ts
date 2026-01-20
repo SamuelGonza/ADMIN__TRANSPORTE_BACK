@@ -8,9 +8,95 @@ export class VehiclesController {
 
     public async create_vehicle(req: Request, res: Response) {
         try {
-            const { company_id, ...payload } = req.body;
+            const { company_id, ...rawPayload } = req.body;
             const picture = req.file;
             const user_company_id = (req as AuthRequest).user?.company_id;
+
+            // Parsear owner_id desde formato multipart (owner_id[type], owner_id[user_id], owner_id[company_id])
+            let owner_id: any = undefined;
+            if (rawPayload['owner_id[type]']) {
+                owner_id = {
+                    type: rawPayload['owner_id[type]']
+                };
+                if (rawPayload['owner_id[user_id]']) {
+                    owner_id.user_id = rawPayload['owner_id[user_id]'];
+                }
+                if (rawPayload['owner_id[company_id]']) {
+                    owner_id.company_id = rawPayload['owner_id[company_id]'];
+                }
+            } else if (rawPayload.owner_id) {
+                // Si viene como objeto ya parseado (JSON)
+                owner_id = typeof rawPayload.owner_id === 'string' 
+                    ? JSON.parse(rawPayload.owner_id) 
+                    : rawPayload.owner_id;
+            }
+
+            // Parsear possible_drivers desde formato multipart (possible_drivers[0], possible_drivers[1], ...)
+            let possible_drivers: string[] | undefined = undefined;
+            const possibleDriversKeys = Object.keys(rawPayload).filter(key => key.startsWith('possible_drivers['));
+            if (possibleDriversKeys.length > 0) {
+                possible_drivers = possibleDriversKeys
+                    .map(key => {
+                        const match = key.match(/possible_drivers\[(\d+)\]/);
+                        return match ? { index: parseInt(match[1]), value: rawPayload[key] } : null;
+                    })
+                    .filter((item): item is { index: number; value: string } => item !== null)
+                    .sort((a, b) => a.index - b.index)
+                    .map(item => item.value)
+                    .filter(Boolean);
+            } else if (rawPayload.possible_drivers) {
+                // Si viene como array ya parseado (JSON)
+                possible_drivers = typeof rawPayload.possible_drivers === 'string'
+                    ? JSON.parse(rawPayload.possible_drivers)
+                    : rawPayload.possible_drivers;
+            }
+
+            // Parsear technical_sheet desde formato multipart (technical_sheet[field])
+            let technical_sheet: any = undefined;
+            const technicalSheetKeys = Object.keys(rawPayload).filter(key => key.startsWith('technical_sheet['));
+            if (technicalSheetKeys.length > 0) {
+                technical_sheet = {};
+                technicalSheetKeys.forEach(key => {
+                    const match = key.match(/technical_sheet\[(.+)\]/);
+                    if (match) {
+                        const fieldName = match[1];
+                        let value: any = rawPayload[key];
+                        
+                        // Convertir fechas si es necesario
+                        if (fieldName.includes('fecha') || fieldName.includes('vencimiento')) {
+                            value = value ? new Date(value) : undefined;
+                        }
+                        // Convertir números si es necesario
+                        else if (fieldName.includes('numero') || fieldName.includes('cc') || fieldName.includes('modelo') || fieldName.includes('capacidad')) {
+                            value = value ? Number(value) : undefined;
+                        }
+                        
+                        if (value !== undefined && value !== null && value !== '') {
+                            technical_sheet[fieldName] = value;
+                        }
+                    }
+                });
+            } else if (rawPayload.technical_sheet) {
+                // Si viene como objeto ya parseado (JSON)
+                technical_sheet = typeof rawPayload.technical_sheet === 'string'
+                    ? JSON.parse(rawPayload.technical_sheet)
+                    : rawPayload.technical_sheet;
+            }
+
+            // Construir payload limpio
+            const payload: any = {
+                ...rawPayload,
+                owner_id,
+                possible_drivers,
+                technical_sheet
+            };
+
+            // Eliminar campos con formato multipart del payload
+            delete payload['owner_id[type]'];
+            delete payload['owner_id[user_id]'];
+            delete payload['owner_id[company_id]'];
+            possibleDriversKeys.forEach(key => delete payload[key]);
+            technicalSheetKeys.forEach(key => delete payload[key]);
 
             await this.vehicleServices.create_new_vehicle({ 
                 payload: payload as any, 
@@ -28,9 +114,12 @@ export class VehiclesController {
                 });
                 return;
             }
+            // Log del error para debugging
+            console.error("Error al crear vehículo:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
             res.status(500).json({
                 ok: false,
-                message: "Error al crear vehículo"
+                message: `Error al crear vehículo: ${errorMessage}`
             });
             return;
         }

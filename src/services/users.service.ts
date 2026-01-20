@@ -1,4 +1,5 @@
 import driver_documentsModel from '@/models/driver_documents.model';
+import mongoose from "mongoose";
 
 import { User, UserRoles } from "@/contracts/interfaces/user.interface";
 import userModel from "@/models/user.model";
@@ -41,7 +42,7 @@ export class UserService {
             if (skip_company_validation === false) await UserService.CompanyService.verify_exist_company_by_id(company_id)
 
             const plane_random_password = is_new_company ? password : generate_password()
-            const hashed_password = hash_password(plane_random_password)
+            const hashed_password = await hash_password(plane_random_password)
 
             const generated_otp = generate_numbers(6)
 
@@ -53,6 +54,7 @@ export class UserService {
                 created: new Date(),
                 full_name,
                 document,
+                avatar: DEFAULT_PROFILE, // Avatar por defecto
                 contact,
                 email,
                 company_id,
@@ -97,7 +99,10 @@ export class UserService {
             }
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "No se pudo registrar el nuevo ususario")
+            // Log del error para debugging
+            console.error("Error en create_new_user:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+            throw new ResponseError(500, `No se pudo registrar el nuevo usuario: ${errorMessage}`)
         }
     }
 
@@ -514,8 +519,8 @@ export class UserService {
         licencia_conduccion_vencimiento,
         seguridad_social_vencimiento
     }: {
-        document: { back: Express.Multer.File, front: Express.Multer.File },
-        licencia_conduccion: { back: Express.Multer.File, front: Express.Multer.File },
+        document: { back?: Express.Multer.File, front?: Express.Multer.File },
+        licencia_conduccion: { back?: Express.Multer.File, front?: Express.Multer.File },
         driver_id: string,
         licencia_conduccion_categoria?: string,
         licencia_conduccion_vencimiento?: Date,
@@ -527,53 +532,87 @@ export class UserService {
 
             let delete_files: string[] = []
 
-            if (find_driver_documents.document.front.public_id && document.front) delete_files.push(find_driver_documents.document.front.public_id)
-            if (find_driver_documents.document.back.public_id && document.back) delete_files.push(find_driver_documents.document.back.public_id)
-            if (find_driver_documents.licencia_conduccion.front.public_id && document.front) delete_files.push(find_driver_documents.document.front.public_id)
-            if (find_driver_documents.licencia_conduccion.back.public_id && document.back) delete_files.push(find_driver_documents.document.back.public_id)
-
-            await delete_media(delete_files)
-
-            const [
-                uploaded_document_front,
-                uploaded_document_back,
-                uploaded_license_front,
-                uploaded_license_back
-            ] = await Promise.all([
-                upload_media({ file: document.front }),
-                upload_media({ file: document.back }),
-                upload_media({ file: licencia_conduccion.front }),
-                upload_media({ file: licencia_conduccion.back })
-            ])
-
-            find_driver_documents.document = {
-                front: {
-                    url: uploaded_document_front.secure_url,
-                    public_id: uploaded_document_front.public_id,
-                    type: "img",
-                    original_name: `cedula_frontal_${Date.now()}`
-                },
-                back: {
-                    url: uploaded_document_back.secure_url,
-                    public_id: uploaded_document_back.public_id,
-                    type: "img",
-                    original_name: `cedula_trasera_${Date.now()}`
-                },
+            // Solo eliminar archivos antiguos si se están subiendo nuevos
+            if (find_driver_documents.document.front?.public_id && document.front) {
+                delete_files.push(find_driver_documents.document.front.public_id);
+            }
+            if (find_driver_documents.document.back?.public_id && document.back) {
+                delete_files.push(find_driver_documents.document.back.public_id);
+            }
+            if (find_driver_documents.licencia_conduccion.front?.public_id && licencia_conduccion.front) {
+                delete_files.push(find_driver_documents.licencia_conduccion.front.public_id);
+            }
+            if (find_driver_documents.licencia_conduccion.back?.public_id && licencia_conduccion.back) {
+                delete_files.push(find_driver_documents.licencia_conduccion.back.public_id);
             }
 
-            find_driver_documents.licencia_conduccion = {
-                front: {
-                    url: uploaded_license_front.secure_url,
-                    public_id: uploaded_license_front.public_id,
+            // Solo eliminar si hay archivos para eliminar
+            if (delete_files.length > 0) {
+                await delete_media(delete_files);
+            }
+
+            // Subir solo los archivos que se proporcionaron
+            const uploadPromises: Promise<any>[] = [];
+            const uploadKeys: string[] = [];
+
+            if (document.front) {
+                uploadPromises.push(upload_media({ file: document.front }));
+                uploadKeys.push('document_front');
+            }
+            if (document.back) {
+                uploadPromises.push(upload_media({ file: document.back }));
+                uploadKeys.push('document_back');
+            }
+            if (licencia_conduccion.front) {
+                uploadPromises.push(upload_media({ file: licencia_conduccion.front }));
+                uploadKeys.push('license_front');
+            }
+            if (licencia_conduccion.back) {
+                uploadPromises.push(upload_media({ file: licencia_conduccion.back }));
+                uploadKeys.push('license_back');
+            }
+
+            const uploadedResults = await Promise.all(uploadPromises);
+
+            // Mapear resultados a las claves correspondientes
+            const uploaded: { [key: string]: any } = {};
+            uploadKeys.forEach((key, index) => {
+                uploaded[key] = uploadedResults[index];
+            });
+
+            // Actualizar solo los campos que se subieron
+            if (document.front && uploaded.document_front) {
+                find_driver_documents.document.front = {
+                    url: uploaded.document_front.secure_url,
+                    public_id: uploaded.document_front.public_id,
+                    type: "img",
+                    original_name: `cedula_frontal_${Date.now()}`
+                };
+            }
+            if (document.back && uploaded.document_back) {
+                find_driver_documents.document.back = {
+                    url: uploaded.document_back.secure_url,
+                    public_id: uploaded.document_back.public_id,
+                    type: "img",
+                    original_name: `cedula_trasera_${Date.now()}`
+                };
+            }
+
+            if (licencia_conduccion.front && uploaded.license_front) {
+                find_driver_documents.licencia_conduccion.front = {
+                    url: uploaded.license_front.secure_url,
+                    public_id: uploaded.license_front.public_id,
                     type: "img",
                     original_name: `licencia_frontal_${Date.now()}`
-                },
-                back: {
-                    url: uploaded_license_back.secure_url,
-                    public_id: uploaded_license_back.public_id,
+                };
+            }
+            if (licencia_conduccion.back && uploaded.license_back) {
+                find_driver_documents.licencia_conduccion.back = {
+                    url: uploaded.license_back.secure_url,
+                    public_id: uploaded.license_back.public_id,
                     type: "img",
                     original_name: `licencia_trasera_${Date.now()}`
-                },
+                };
             }
 
             // Metadatos legales
@@ -585,7 +624,10 @@ export class UserService {
 
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "No se actualizar los archivos")
+            // Log del error para debugging
+            console.error("Error en update_driver_documents:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+            throw new ResponseError(500, `No se pudieron actualizar los archivos: ${errorMessage}`)
         }
     }
 
@@ -795,7 +837,7 @@ export class UserService {
             find_user.full_name = `${find_user.full_name.split(" ")[0]}****`;
             find_user.document.number = find_user.document.number % 10000;
             find_user.email = `${find_user.email.slice(0, 4)}*****@${find_user.email.split("@")[1]}`;
-            find_user.password = `${hash_password(generate_numbers(24).toString())}`;
+            find_user.password = await hash_password(generate_numbers(24).toString());
             find_user.otp_recovery = 0;
             find_user.is_delete = true;
             find_user.is_active = false;
@@ -841,11 +883,19 @@ export class UserService {
     
     public async verify_exist_user_by_id({id}: {id: string}) {
         try {
+            // Validar que el ID sea un ObjectId válido
+            if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+                throw new ResponseError(400, `ID de usuario inválido: ${id}`);
+            }
+            
             const find = await userModel.findById(id)
-            if (!find) throw new ResponseError(409, "Esta usuario no existe")
+            if (!find) throw new ResponseError(404, `Usuario con ID ${id} no existe`)
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "No se pudo validar la existencia del usuario")
+            // Log del error para debugging
+            console.error("Error en verify_exist_user_by_id:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+            throw new ResponseError(500, `No se pudo validar la existencia del usuario: ${errorMessage}`)
         }
     }
 }

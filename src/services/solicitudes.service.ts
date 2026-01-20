@@ -951,9 +951,9 @@ export class SolicitudesService {
         company_id?: string,
         accepted_by?: string,
             payload: {
-            he: string,
+            he?: string, // Opcional: si no se proporciona, se usa el existente o se genera uno nuevo
             empresa: "travel" | "national",
-            placa: string, // Ahora se usa placa en lugar de vehiculo_id (para compatibilidad)
+            placa?: string, // Opcional si se usa vehicle_assignments
             conductor_id?: string, // Permite elegir conductor del listado del vehículo (para compatibilidad)
             
             // NUEVO: Array de vehículos asignados (multi-vehículo)
@@ -1065,6 +1065,10 @@ export class SolicitudesService {
                 }
             } else {
                 // Comportamiento tradicional: un solo vehículo
+                if (!payload.placa) {
+                    throw new ResponseError(400, "placa es requerida cuando no se usa vehicle_assignments");
+                }
+                
             const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
                 placa: payload.placa,
                 company_id 
@@ -1097,7 +1101,18 @@ export class SolicitudesService {
 
             // Actualizar la solicitud
             solicitud.status = "accepted";
-            solicitud.he = payload.he;
+            
+            // Determinar HE: usar el proporcionado, el existente, o generar uno nuevo
+            if (payload.he) {
+                solicitud.he = payload.he;
+            } else if (solicitud.he) {
+                // Usar el HE existente de la solicitud
+                // No hacer nada, ya tiene HE
+            } else {
+                // Generar nuevo HE basado en la empresa
+                solicitud.he = await this.generate_next_he(company_id!, payload.empresa);
+            }
+            
             solicitud.empresa = payload.empresa;
 
             // Guardar requested_passengers / estimaciones
@@ -1302,7 +1317,10 @@ export class SolicitudesService {
             };
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "No se pudo aceptar la solicitud");
+            // Log del error para debugging
+            console.error("Error al aceptar solicitud:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+            throw new ResponseError(500, `No se pudo aceptar la solicitud: ${errorMessage}`);
         }
     }
 
@@ -1549,10 +1567,11 @@ export class SolicitudesService {
             }
 
             // Convertir fecha a formato para comparación (solo fecha, sin hora)
+            // Usar UTC para evitar problemas de timezone
             const fechaComparacion = new Date(fecha);
-            fechaComparacion.setHours(0, 0, 0, 0);
+            fechaComparacion.setUTCHours(0, 0, 0, 0);
             const fechaFinComparacion = new Date(fechaComparacion);
-            fechaFinComparacion.setHours(23, 59, 59, 999);
+            fechaFinComparacion.setUTCHours(23, 59, 59, 999);
 
             // Función para convertir hora string a minutos desde medianoche
             const horaAMinutos = (hora: string): number => {
@@ -1568,27 +1587,106 @@ export class SolicitudesService {
             // Verificar disponibilidad de cada vehículo y conductor
             const vehiclesWithAvailability = await Promise.all(
                 vehicles.map(async (vehicle: any) => {
+                    const vehicleId = normalizeId(vehicle._id);
+                    if (!vehicleId) {
+                        // Si no se puede normalizar el ID, considerar el vehículo como no disponible
+                        return {
+                            vehiculo: {
+                                _id: String(vehicle._id),
+                                placa: vehicle.placa,
+                                n_numero_interno: vehicle.n_numero_interno,
+                                seats: vehicle.seats,
+                                type: vehicle.type,
+                                flota: vehicle.flota
+                            },
+                            seats: Number(vehicle.seats || 0),
+                            is_available: false,
+                            is_in_service: true,
+                            conflicting_service: null,
+                            flota_priority: vehicle.flota === "propio" ? 3 : vehicle.flota === "afiliado" ? 2 : 1,
+                            driver: null,
+                            possible_drivers: []
+                        };
+                    }
+                    
                     // Buscar solicitudes activas para este vehículo en la fecha
                     // Considerar tanto vehiculo_id principal como vehicle_assignments
                     // Incluir solo solicitudes pending o accepted (no rejected)
-                    const solicitudesActivas = await solicitudModel.find({
-                        $or: [
-                            { vehiculo_id: vehicle._id },
-                            { "vehicle_assignments.vehiculo_id": vehicle._id }
-                        ],
+                    const vehicleObjectId = new mongoose.Types.ObjectId(vehicleId);
+                    
+                    // Buscar en vehiculo_id principal
+                    const solicitudesPorVehiculoPrincipal = await solicitudModel.find({
+                        vehiculo_id: vehicleObjectId,
                         fecha: {
                             $gte: fechaComparacion,
                             $lte: fechaFinComparacion
                         },
-                        status: { $in: ["pending", "accepted"] }, // Solo pending o accepted
-                        service_status: { $ne: "finished" } // No considerar finalizadas
-                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor").lean();
+                        status: { $in: ["pending", "accepted"] },
+                        service_status: { $ne: "finished" }
+                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor vehiculo_id status service_status").lean();
+                    
+                    // Buscar en vehicle_assignments
+                    // Hacer una búsqueda más amplia y filtrar manualmente para asegurar que encontremos todas las solicitudes
+                    const todasLasSolicitudesEnFecha = await solicitudModel.find({
+                        fecha: {
+                            $gte: fechaComparacion,
+                            $lte: fechaFinComparacion
+                        },
+                        status: { $in: ["pending", "accepted"] },
+                        service_status: { $ne: "finished" }
+                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor vehiculo_id status service_status").lean();
+                    
+                    // Filtrar manualmente las que tienen este vehículo en vehicle_assignments
+                    const solicitudesPorAssignments = todasLasSolicitudesEnFecha.filter((sol: any) => {
+                        if (!sol.vehicle_assignments || !Array.isArray(sol.vehicle_assignments)) return false;
+                        return sol.vehicle_assignments.some((va: any) => {
+                            const vaId = normalizeId(va.vehiculo_id?._id || va.vehiculo_id);
+                            return vaId === vehicleId;
+                        });
+                    });
+                    
+                    // Debug: Log temporal para verificar qué se está encontrando
+                    if (solicitudesPorAssignments.length > 0 || solicitudesPorVehiculoPrincipal.length > 0) {
+                        console.log(`[DEBUG] Vehículo ${vehicle.placa} (${vehicleId}):`, {
+                            encontradasPorPrincipal: solicitudesPorVehiculoPrincipal.length,
+                            encontradasPorAssignments: solicitudesPorAssignments.length,
+                            totalEnFecha: todasLasSolicitudesEnFecha.length,
+                            fechaBuscada: fecha.toISOString(),
+                            fechaComparacion: fechaComparacion.toISOString(),
+                            fechaFinComparacion: fechaFinComparacion.toISOString()
+                        });
+                    }
+                    
+                    // Combinar y eliminar duplicados
+                    const todasLasSolicitudesVehiculo = [...solicitudesPorVehiculoPrincipal, ...solicitudesPorAssignments];
+                    const solicitudesActivas = todasLasSolicitudesVehiculo.filter((sol, index, self) => 
+                        index === self.findIndex((s) => String(s._id) === String(sol._id))
+                    );
+                    
+                    // Debug adicional: verificar que las fechas estén en el rango correcto
+                    if (solicitudesActivas.length > 0) {
+                        console.log(`[DEBUG] Solicitudes activas encontradas para ${vehicle.placa}:`, solicitudesActivas.map((s: any) => ({
+                            _id: s._id,
+                            fecha: s.fecha,
+                            hora_inicio: s.hora_inicio,
+                            status: s.status,
+                            service_status: s.service_status,
+                            vehiculo_id: String(s.vehiculo_id),
+                            vehicle_assignments: s.vehicle_assignments?.map((va: any) => ({
+                                vehiculo_id: String(va.vehiculo_id?._id || va.vehiculo_id),
+                                placa: va.placa
+                            }))
+                        })));
+                    }
 
                     // También buscar por conductor para validar disponibilidad del conductor
                     const conductorIds = [
                         vehicle.driver_id?._id || vehicle.driver_id,
                         ...(vehicle.possible_drivers || []).map((d: any) => d._id || d).filter(Boolean)
-                    ].filter(Boolean);
+                    ]
+                    .map(id => normalizeId(id))
+                    .filter((id): id is string => id !== null)
+                    .map(id => new mongoose.Types.ObjectId(id));
 
                     const solicitudesConductor = conductorIds.length > 0 ? await solicitudModel.find({
                         $or: [
@@ -1601,7 +1699,7 @@ export class SolicitudesService {
                         },
                         status: { $in: ["pending", "accepted"] },
                         service_status: { $ne: "finished" }
-                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor").lean() : [];
+                    }).select("hora_inicio hora_final total_horas fecha vehicle_assignments conductor vehiculo_id").lean() : [];
 
                     // Combinar ambas búsquedas y eliminar duplicados
                     const todasLasSolicitudes = [...solicitudesActivas, ...solicitudesConductor];
@@ -1617,38 +1715,91 @@ export class SolicitudesService {
                     // Verificar si hay solapamiento de horarios para el vehículo
                     for (const solicitud of solicitudesUnicas) {
                         // Verificar si esta solicitud afecta a este vehículo
-                        const afectaVehiculo = String(solicitud.vehiculo_id) === String(vehicle._id) ||
-                            (solicitud.vehicle_assignments && Array.isArray(solicitud.vehicle_assignments) &&
-                                solicitud.vehicle_assignments.some((va: any) => String(va.vehiculo_id) === String(vehicle._id)));
+                        // Normalizar IDs para comparación correcta
+                        const solicitudVehiculoId = normalizeId(solicitud.vehiculo_id);
+                        const afectaVehiculoPrincipal = solicitudVehiculoId === vehicleId;
+                        
+                        // Verificar también en vehicle_assignments
+                        // vehicle_assignments puede tener vehiculo_id como ObjectId o como objeto poblado
+                        const afectaEnAssignments = solicitud.vehicle_assignments && Array.isArray(solicitud.vehicle_assignments) &&
+                            solicitud.vehicle_assignments.some((va: any) => {
+                                // Puede ser ObjectId directo, objeto poblado con _id, o string
+                                const vaVehiculoIdRaw = va.vehiculo_id;
+                                const vaVehiculoId = normalizeId(
+                                    vaVehiculoIdRaw?._id || vaVehiculoIdRaw
+                                );
+                                return vaVehiculoId === vehicleId;
+                            });
+                        
+                        const afectaVehiculo = afectaVehiculoPrincipal || afectaEnAssignments;
 
                         if (!afectaVehiculo) continue;
+                        
+                        // Debug: Log cuando se encuentra una solicitud que afecta al vehículo
+                        console.log(`[DEBUG] Solicitud ${solicitud._id} afecta vehículo ${vehicle.placa}:`, {
+                            afectaVehiculoPrincipal,
+                            afectaEnAssignments,
+                            solicitudFecha: solicitud.fecha,
+                            solicitudHoraInicio: solicitud.hora_inicio,
+                            solicitudStatus: solicitud.status,
+                            solicitudServiceStatus: solicitud.service_status,
+                            vehicleAssignments: solicitud.vehicle_assignments?.map((va: any) => ({
+                                vehiculo_id: String(va.vehiculo_id?._id || va.vehiculo_id),
+                                placa: va.placa
+                            }))
+                        });
 
                         const solHoraInicio = horaAMinutos(solicitud.hora_inicio || "00:00");
                         let solHoraFin: number;
                         let horaFinalStr: string;
 
                         if (solicitud.hora_final && solicitud.hora_final.trim() !== "") {
-                            // Si hay hora_final, usarla
+                            // Si hay hora_final, usarla (servicio ya finalizado)
                             solHoraFin = horaAMinutos(solicitud.hora_final);
                             horaFinalStr = solicitud.hora_final;
                         } else {
-                            // Si no, calcular basándose en total_horas
-                            const solTotalHoras = solicitud.total_horas || 0;
-                            solHoraFin = solHoraInicio + (solTotalHoras * 60);
-                            const horasFin = Math.floor(solHoraFin / 60);
-                            const minutosFin = solHoraFin % 60;
-                            horaFinalStr = `${horasFin.toString().padStart(2, '0')}:${minutosFin.toString().padStart(2, '0')}`;
+                            // Si no hay hora_final, el servicio aún no ha finalizado
+                            // Para solicitudes aceptadas o iniciadas, considerar que el vehículo está ocupado
+                            // desde la hora de inicio hasta el final del día (23:59)
+                            // Esto es conservador y evita conflictos
+                            solHoraFin = 24 * 60; // Fin del día (23:59 = 1439 minutos)
+                            horaFinalStr = "23:59";
                         }
+                        
+                        // Debug: Log del cálculo de horarios
+                        console.log(`[DEBUG] Cálculo de horarios para solicitud ${solicitud._id}:`, {
+                            horaInicio: solicitud.hora_inicio,
+                            horaFinal: solicitud.hora_final,
+                            totalHoras: solicitud.total_horas,
+                            solHoraInicioMinutos: solHoraInicio,
+                            solHoraFinMinutos: solHoraFin,
+                            horaFinalCalculada: horaFinalStr,
+                            horaInicioNuevaMinutos: horaInicioMinutos,
+                            horaFinMinimaEstimada: horaFinMinimaEstimada
+                        });
 
                         // Verificar solapamiento completo: 
-                        // - Si la hora de inicio nueva está dentro del rango existente
-                        // - Si la hora de inicio existente está dentro del rango nuevo (estimado)
-                        // - Si hay cualquier solapamiento entre los rangos
+                        // Dos rangos se solapan si:
+                        // - El inicio del nuevo está dentro del existente: nueva_inicio >= existente_inicio && nueva_inicio < existente_fin
+                        // - El inicio del existente está dentro del nuevo: existente_inicio >= nueva_inicio && existente_inicio < nueva_fin
+                        // - El nuevo empieza antes pero termina después del inicio del existente: nueva_inicio < existente_inicio && nueva_fin > existente_inicio
                         const haySolapamiento = (
                             (horaInicioMinutos >= solHoraInicio && horaInicioMinutos < solHoraFin) ||
                             (solHoraInicio >= horaInicioMinutos && solHoraInicio < horaFinMinimaEstimada) ||
                             (horaInicioMinutos < solHoraInicio && horaFinMinimaEstimada > solHoraInicio)
                         );
+                        
+                        // Debug: Log del solapamiento
+                        console.log(`[DEBUG] Verificación de solapamiento para ${vehicle.placa}:`, {
+                            haySolapamiento,
+                            nuevaInicio: horaInicioMinutos,
+                            nuevaFin: horaFinMinimaEstimada,
+                            existenteInicio: solHoraInicio,
+                            existenteFin: solHoraFin,
+                            condicion1: horaInicioMinutos >= solHoraInicio && horaInicioMinutos < solHoraFin,
+                            condicion2: solHoraInicio >= horaInicioMinutos && solHoraInicio < horaFinMinimaEstimada,
+                            condicion3: horaInicioMinutos < solHoraInicio && horaFinMinimaEstimada > solHoraInicio
+                        });
 
                         if (haySolapamiento) {
                             isInService = true;
@@ -1657,31 +1808,36 @@ export class SolicitudesService {
                                 hora_final: horaFinalStr,
                                 fecha: solicitud.fecha
                             };
+                            console.log(`[DEBUG] ✅ Vehículo ${vehicle.placa} marcado como EN SERVICIO por solapamiento`);
                             break;
                         }
                     }
 
-                    // Verificar disponibilidad del conductor principal
-                    if (vehicle.driver_id && !isInService) {
-                        const driverId = normalizeId(vehicle.driver_id._id || vehicle.driver_id);
+                    // Verificar disponibilidad de TODOS los conductores (principal y alternativos)
+                    // Función helper para verificar si un conductor está ocupado
+                    const verificarConductorOcupado = (conductorId: string | null): boolean => {
+                        if (!conductorId) return false;
+                        
+                        const driverIdNormalized = normalizeId(conductorId);
+                        if (!driverIdNormalized) return false;
+                        
                         for (const solicitud of solicitudesUnicas) {
                             const solicitudConductorId = normalizeId(solicitud.conductor);
-                            const solicitudConductoresAsignados = solicitud.vehicle_assignments?.map((va: any) => normalizeId(va.conductor_id)).filter(Boolean) || [];
+                            // También verificar en vehicle_assignments (puede ser ObjectId o objeto poblado)
+                            const solicitudConductoresAsignados = solicitud.vehicle_assignments?.map((va: any) => {
+                                const conductorIdRaw = va.conductor_id;
+                                return normalizeId(conductorIdRaw?._id || conductorIdRaw);
+                            }).filter(Boolean) || [];
 
-                            if (solicitudConductorId === driverId || solicitudConductoresAsignados.includes(driverId)) {
+                            if (solicitudConductorId === driverIdNormalized || solicitudConductoresAsignados.includes(driverIdNormalized)) {
                                 const solHoraInicio = horaAMinutos(solicitud.hora_inicio || "00:00");
                                 let solHoraFin: number;
-                                let horaFinalStr: string;
 
                                 if (solicitud.hora_final && solicitud.hora_final.trim() !== "") {
                                     solHoraFin = horaAMinutos(solicitud.hora_final);
-                                    horaFinalStr = solicitud.hora_final;
                                 } else {
-                                    const solTotalHoras = solicitud.total_horas || 0;
-                                    solHoraFin = solHoraInicio + (solTotalHoras * 60);
-                                    const horasFin = Math.floor(solHoraFin / 60);
-                                    const minutosFin = solHoraFin % 60;
-                                    horaFinalStr = `${horasFin.toString().padStart(2, '0')}:${minutosFin.toString().padStart(2, '0')}`;
+                                    // Si no hay hora_final, considerar hasta el final del día
+                                    solHoraFin = 24 * 60; // Fin del día
                                 }
 
                                 const haySolapamiento = (
@@ -1691,7 +1847,36 @@ export class SolicitudesService {
                                 );
 
                                 if (haySolapamiento) {
-                                    isDriverBusy = true;
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    };
+                    
+                    // Verificar conductor principal
+                    if (vehicle.driver_id && !isInService) {
+                        const driverId = normalizeId(vehicle.driver_id._id || vehicle.driver_id);
+                        if (driverId && verificarConductorOcupado(driverId)) {
+                            isDriverBusy = true;
+                            // Buscar la solicitud conflictiva para obtener los detalles
+                            for (const solicitud of solicitudesUnicas) {
+                                const solicitudConductorId = normalizeId(solicitud.conductor);
+                                const solicitudConductoresAsignados = solicitud.vehicle_assignments?.map((va: any) => {
+                                    const conductorIdRaw = va.conductor_id;
+                                    return normalizeId(conductorIdRaw?._id || conductorIdRaw);
+                                }).filter(Boolean) || [];
+                                
+                                if (solicitudConductorId === driverId || solicitudConductoresAsignados.includes(driverId)) {
+                                    const solHoraInicio = horaAMinutos(solicitud.hora_inicio || "00:00");
+                                    let horaFinalStr: string;
+                                    
+                                    if (solicitud.hora_final && solicitud.hora_final.trim() !== "") {
+                                        horaFinalStr = solicitud.hora_final;
+                                    } else {
+                                        horaFinalStr = "23:59";
+                                    }
+                                    
                                     conflictingDriverService = {
                                         hora_inicio: solicitud.hora_inicio,
                                         hora_final: horaFinalStr,
@@ -1702,6 +1887,21 @@ export class SolicitudesService {
                             }
                         }
                     }
+                    
+                    // Verificar y filtrar possible_drivers que están ocupados
+                    const possibleDriversDisponibles = Array.isArray(vehicle.possible_drivers) 
+                        ? vehicle.possible_drivers
+                            .filter(Boolean)
+                            .filter((d: any) => {
+                                const driverId = normalizeId(d._id || d);
+                                return !verificarConductorOcupado(driverId);
+                            })
+                            .map((d: any) => ({
+                                _id: String(d._id || d),
+                                full_name: d.full_name || "",
+                                phone: d.contact?.phone || ""
+                            }))
+                        : [];
 
                     // El vehículo está disponible solo si no está en servicio Y el conductor no está ocupado
                     const isAvailable = !isInService && !isDriverBusy;
@@ -1730,15 +1930,7 @@ export class SolicitudesService {
                             phone: (vehicle.driver_id as any).contact?.phone || "",
                             is_busy: isDriverBusy
                         } : null,
-                        possible_drivers: Array.isArray(vehicle.possible_drivers) 
-                            ? vehicle.possible_drivers
-                                .filter(Boolean)
-                                .map((d: any) => ({
-                                    _id: String(d._id || d),
-                                    full_name: d.full_name || "",
-                                    phone: d.contact?.phone || ""
-                                }))
-                            : []
+                        possible_drivers: possibleDriversDisponibles
                     };
                 })
             );
@@ -1761,7 +1953,8 @@ export class SolicitudesService {
             const availableVehicles = vehiclesWithAvailability.filter(v => v.is_available);
             const inServiceVehicles = vehiclesWithAvailability.filter(v => !v.is_available);
 
-            // Calcular distribución de pasajeros usando solo vehículos disponibles
+            // Calcular distribución optimizada de pasajeros usando solo vehículos disponibles
+            // Objetivo: minimizar el número de vehículos necesarios
             const distribution: Array<{
                 vehiculo: any;
                 seats: number;
@@ -1772,19 +1965,62 @@ export class SolicitudesService {
             }> = [];
 
             let remaining = requested_passengers;
-            for (const vehicle of availableVehicles) {
-                if (remaining <= 0) break;
-                if (vehicle.seats <= 0) continue;
 
-                const assigned = Math.min(vehicle.seats, remaining);
+            // Primero, verificar si hay un solo vehículo que pueda cubrir todos los pasajeros
+            const singleVehicleSolution = availableVehicles.find(v => v.seats >= requested_passengers);
+            
+            if (singleVehicleSolution) {
+                // Si hay un vehículo que puede cubrir todos los pasajeros, usarlo
                 distribution.push({
-                    vehiculo: vehicle.vehiculo,
-                    seats: vehicle.seats,
-                    assigned_passengers: assigned,
+                    vehiculo: singleVehicleSolution.vehiculo,
+                    seats: singleVehicleSolution.seats,
+                    assigned_passengers: requested_passengers,
                     is_available: true,
                     is_in_service: false
                 });
-                remaining -= assigned;
+                remaining = 0;
+            } else {
+                // Si no hay un solo vehículo, optimizar para usar el menor número posible
+                // Ordenar vehículos por capacidad descendente para priorizar los más grandes
+                const sortedVehicles = [...availableVehicles].sort((a, b) => {
+                    // Primero por prioridad de flota (mayor primero)
+                    if (a.flota_priority !== b.flota_priority) {
+                        return b.flota_priority - a.flota_priority;
+                    }
+                    // Luego por capacidad (mayor primero)
+                    return b.seats - a.seats;
+                });
+                
+                // Algoritmo voraz optimizado: usar el menor número de vehículos posible
+                for (const vehicle of sortedVehicles) {
+                    if (remaining <= 0) break;
+                    if (vehicle.seats <= 0) continue;
+
+                    // Si este vehículo puede cubrir todos los pasajeros restantes, usarlo y terminar
+                    if (vehicle.seats >= remaining) {
+                        distribution.push({
+                            vehiculo: vehicle.vehiculo,
+                            seats: vehicle.seats,
+                            assigned_passengers: remaining,
+                            is_available: true,
+                            is_in_service: false
+                        });
+                        remaining = 0;
+                        break;
+                    } else {
+                        // Este vehículo puede ayudar parcialmente
+                        // Solo agregarlo si realmente contribuye a la solución
+                        const assigned = Math.min(vehicle.seats, remaining);
+                        distribution.push({
+                            vehiculo: vehicle.vehiculo,
+                            seats: vehicle.seats,
+                            assigned_passengers: assigned,
+                            is_available: true,
+                            is_in_service: false
+                        });
+                        remaining -= assigned;
+                    }
+                }
             }
 
             return {

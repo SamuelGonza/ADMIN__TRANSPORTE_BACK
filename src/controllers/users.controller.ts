@@ -16,11 +16,21 @@ export class UsersController {
     public async register_user(req: Request, res: Response) {
         try {
             const user_company_id = (req as AuthRequest).user?.company_id;
+            const company_id = user_company_id || req.body.company_id;
+            
+            if (!company_id) {
+                res.status(400).json({
+                    ok: false,
+                    message: "company_id es requerido. Debe estar en el token de autenticación o en el body."
+                });
+                return;
+            }
+            
             await this.userService.create_new_user({
                 payload: req.body,
-                company_id: user_company_id || req.body.company_id,
+                company_id: company_id,
                 skip_company_validation: req.body.skip_company_validation,
-                is_new_company: req.body.is_new_company
+                is_new_company: req.body.is_new_company || false
             });
             res.status(201).json({
                 message: "Usuario registrado exitosamente"
@@ -33,9 +43,12 @@ export class UsersController {
                 });
                 return;
             }
+            // Log del error para debugging
+            console.error("Error al registrar usuario:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
             res.status(500).json({
                 ok: false,
-                message: "Error al registrar el usuario"
+                message: `Error al registrar el usuario: ${errorMessage}`
             });
             return;
         }
@@ -428,16 +441,28 @@ export class UsersController {
             const target_driver_id = (role === 'conductor' && user_id) ? user_id : driver_id;
             
             const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-            if (!files) throw new Error("No files uploaded");
-
+            
+            // Los archivos son opcionales en la actualización
             const document = {
-                front: files['document_front']?.[0],
-                back: files['document_back']?.[0]
+                front: files?.['document_front']?.[0],
+                back: files?.['document_back']?.[0]
             };
             const licencia_conduccion = {
-                front: files['license_front']?.[0],
-                back: files['license_back']?.[0]
+                front: files?.['license_front']?.[0],
+                back: files?.['license_back']?.[0]
             };
+            
+            // Verificar que al menos se esté actualizando algo
+            const hasFiles = document.front || document.back || licencia_conduccion.front || licencia_conduccion.back;
+            const hasMetadata = licencia_conduccion_categoria || licencia_conduccion_vencimiento || seguridad_social_vencimiento;
+            
+            if (!hasFiles && !hasMetadata) {
+                res.status(400).json({
+                    ok: false,
+                    message: "Debe proporcionar al menos un archivo o metadato para actualizar"
+                });
+                return;
+            }
 
             await this.userService.update_driver_documents({
                 document,
@@ -458,9 +483,12 @@ export class UsersController {
                 });
                 return;
             }
+            // Log del error para debugging
+            console.error("Error al actualizar documentos:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
             res.status(500).json({
                 ok: false,
-                message: "Error al actualizar documentos"
+                message: `Error al actualizar documentos: ${errorMessage}`
             });
             return;
         }

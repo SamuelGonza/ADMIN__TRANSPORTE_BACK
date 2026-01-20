@@ -39,21 +39,45 @@ export class VehicleServices {
                 technical_sheet
             } = payload;
 
+            // Validar que driver_id esté presente
+            if (!driver_id) {
+                throw new ResponseError(400, "driver_id es requerido");
+            }
+
             // Validaciones que se pueden ejecutar en paralelo
             const validationPromises = [
                 this.verify_exist_vehicle({ placa, company_id }),
                 VehicleServices.UserService.verify_exist_user_by_id({ id: String(driver_id) })
             ];
 
+            // Validar possible_drivers si existen
+            if (possible_drivers && Array.isArray(possible_drivers) && possible_drivers.length > 0) {
+                for (const possibleDriverId of possible_drivers) {
+                    if (possibleDriverId) {
+                        validationPromises.push(
+                            VehicleServices.UserService.verify_exist_user_by_id({ id: String(possibleDriverId) })
+                        );
+                    }
+                }
+            }
+
             // Agregar validaciones según el tipo de propietario
             if (owner_id.type === "Company") {
+                if (!owner_id.company_id) {
+                    throw new ResponseError(400, "owner_id.company_id es requerido cuando owner_id.type es 'Company'");
+                }
                 validationPromises.push(
                     VehicleServices.CompanyService.verify_exist_company_by_id(String(owner_id.company_id))
                 );
-            } else {
+            } else if (owner_id.type === "User") {
+                if (!owner_id.user_id) {
+                    throw new ResponseError(400, "owner_id.user_id es requerido cuando owner_id.type es 'User'");
+                }
                 validationPromises.push(
                     VehicleServices.UserService.verify_exist_user_by_id({ id: String(owner_id.user_id) })
                 );
+            } else {
+                throw new ResponseError(400, "owner_id.type debe ser 'Company' o 'User'");
             }
 
             // Ejecutar todas las validaciones en paralelo
@@ -143,7 +167,10 @@ export class VehicleServices {
 
         } catch (error) {
             if (error instanceof ResponseError) throw error;
-            throw new ResponseError(500, "No se pudo crear el vehiculo")
+            // Log del error para debugging
+            console.error("Error en create_new_vehicle:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+            throw new ResponseError(500, `No se pudo crear el vehículo: ${errorMessage}`)
         }
     }
 
