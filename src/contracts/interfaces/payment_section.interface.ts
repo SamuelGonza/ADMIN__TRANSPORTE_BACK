@@ -1,6 +1,18 @@
 import { Document, ObjectId } from "mongoose";
 
 /**
+ * Configuración del pago al vehículo (contrato de compra)
+ */
+export interface PagoVehiculo {
+    tipo_contrato: "fijo" | "ocasional";
+    pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+    tarifa: number;                    // Tarifa según el modo ($/hora, $/km, etc.)
+    cantidad?: number;                 // Cantidad usada para el cálculo (horas, km, etc.)
+    valor_calculado?: number;          // Resultado del cálculo (tarifa × cantidad)
+    usar_valor_manual?: boolean;       // Si true, usar valor_base manual en vez del calculado
+}
+
+/**
  * Cuenta de cobro individual por propietario de vehículo
  */
 export interface CuentaCobro {
@@ -15,8 +27,11 @@ export interface CuentaCobro {
     conductor_id?: ObjectId; // Conductor asignado al vehículo en este servicio
     flota: "externo" | "propio" | "afiliado";
     
+    // Configuración del contrato de compra (cómo se paga al vehículo)
+    pago_vehiculo?: PagoVehiculo;
+    
     // Valores financieros
-    valor_base: number; // Valor a pagar antes de descuentos
+    valor_base: number; // Valor a pagar antes de descuentos (calculado o manual)
     gastos_operacionales: number; // Suma de gastos operacionales del vehículo
     gastos_preoperacionales: number; // Suma de gastos preoperacionales (si aplica)
     valor_final: number; // valor_base - gastos_operacionales - gastos_preoperacionales

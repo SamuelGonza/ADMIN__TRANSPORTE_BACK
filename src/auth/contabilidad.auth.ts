@@ -20,6 +20,7 @@ export const ContabilidadAuth = async (req: Request, res: Response, next: NextFu
         (req as AuthRequest).user = {
             _id: decoded._id,
             role: decoded.role,
+            company_id: decoded.company_id
         };
 
         next()

@@ -28,11 +28,10 @@ const ContractSchema: Schema = new Schema<Contract>({
     tipo_contrato: { type: String, required: true, enum: ["fijo", "ocasional"], default: "fijo" },
 
     cobro: {
-        modo_default: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "tarifa_amva", "por_viaje", "por_trayecto"] },
+        modo_default: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"] },
         por_hora: { type: Number, required: false },
         por_kilometro: { type: Number, required: false },
         por_distancia: { type: Number, required: false },
-        tarifa_amva: { type: Number, required: false },
         por_viaje: { type: Number, required: false },
         por_trayecto: { type: Number, required: false }
     },

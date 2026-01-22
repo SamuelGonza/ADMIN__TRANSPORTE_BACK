@@ -33,12 +33,24 @@ export interface BitacoraSolicitud extends Document {
     origen_location_id?: ObjectId;
     destino_location_id?: ObjectId;
 
-    // Estimación de precio (según contrato/tarifario)
+    // Datos del servicio (para cálculos de contrato)
+    kilometros_reales?: number; // Kilómetros del viaje - se puede definir en cualquier momento
+    
+    // DEPRECATED: usar contrato_venta
     estimated_km?: number;
     estimated_hours?: number;
-    pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva" | "por_viaje" | "por_trayecto";
+    pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
     pricing_rate?: number;
     estimated_price?: number;
+    
+    // Contrato de VENTA (lo que se cobra al cliente) - Coordinador Comercial
+    contrato_venta?: {
+        contract_id?: ObjectId;           // Referencia al contrato del cliente
+        pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+        tarifa: number;                   // Tarifa según el modo ($/hora, $/km, etc.)
+        cantidad?: number;                // Cantidad (horas, km) - se puede actualizar en cualquier momento
+        valor_calculado?: number;         // Resultado del cálculo (tarifa × cantidad)
+    };
 
     // Vehículo y conductor (pueden ser null si está en estado "sin asignación")
     vehiculo_id?: ObjectId; // Referencia al vehículo (permite populate)
@@ -59,7 +71,17 @@ export interface BitacoraSolicitud extends Document {
         conductor_id: ObjectId;
         conductor_phone?: string;
 
-        // "Contrato" por bus (cada bus es una línea independiente de control)
+        // Contrato de COMPRA por vehículo (lo que se paga al vehículo)
+        // Se define al momento de asignar el vehículo
+        contrato_compra?: {
+            tipo_contrato: "fijo" | "ocasional";
+            pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+            tarifa: number;                   // Tarifa según el modo ($/hora, $/km, etc.)
+            cantidad?: number;                // Cantidad (horas, km) - se puede actualizar en cualquier momento
+            valor_calculado?: number;         // Resultado del cálculo (tarifa × cantidad)
+        };
+
+        // DEPRECATED: Mantener por compatibilidad
         contract_id?: ObjectId;
         contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
         contract_charge_amount?: number;
@@ -87,6 +109,7 @@ export interface BitacoraSolicitud extends Document {
     n_factura: string; // N° FACTURA
     fecha_factura?: Date; // FECHA de factura (si existe en el Excel)
     factura_id?: ObjectId; // Referencia a la colección Facturas (si se genera por el sistema)
+    preliquidaciones?: ObjectId[]; // Referencias a las preliquidaciones
 
     // Utilidad
     utilidad: number; // UTILIDAD (valor)
@@ -100,7 +123,7 @@ export interface BitacoraSolicitud extends Document {
     contract_charge_amount?: number;
 
     // Flujo de contabilidad
-    accounting_status?: "no_iniciado" | "pendiente_operacional" | "operacional_completo" | "prefactura_pendiente" | "prefactura_aprobada" | "listo_para_facturacion" | "facturado"; // Estado del flujo de contabilidad
+    accounting_status?: "no_iniciado" | "pendiente_operacional" | "operacional_completo" | "prefactura_pendiente" | "prefactura_aprobada" | "listo_para_facturacion" | "facturado" | "listo_para_liquidar"; // Estado del flujo de contabilidad
     prefactura?: {
         numero?: string;
         fecha?: Date;

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preliquidación {{preliquidacion_numero}}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+        .content {
+            margin-bottom: 20px;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Preliquidación N° {{preliquidacion_numero}}</h1>
+    </div>
+    
+    <div class="content">
+        <p>Estimado/a <strong>{{client_name}}</strong>,</p>
+        
+        <p>Le informamos que se ha generado una preliquidación para su revisión.</p>
+        
+        <p>La preliquidación incluye las solicitudes facturadas y los gastos operacionales y preoperacionales correspondientes.</p>
+        
+        {{notas_section}}
+        
+        <p>Puede descargar el documento PDF adjunto o acceder a través del siguiente enlace:</p>
+        
+        <p style="text-align: center;">
+            <a href="{{dashboard_link}}" class="button">Ver Preliquidación</a>
+        </p>
+        
+        <p>Si tiene alguna pregunta o necesita aclaraciones, no dude en contactarnos.</p>
+        
+        <p>Saludos cordiales,<br>
+        <strong>{{company_name}}</strong></p>
+    </div>
+    
+    <div class="footer">
+        <p>&copy; {{year}} Admin Transporte. Todos los derechos reservados.</p>
+        <p>Este es un correo automático, por favor no responda a este mensaje.</p>
+    </div>
+</body>
+</html>

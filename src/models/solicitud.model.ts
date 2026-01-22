@@ -27,12 +27,24 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     origen_location_id: { type: MongoIdRef, ref: "Location", required: false },
     destino_location_id: { type: MongoIdRef, ref: "Location", required: false },
 
-    // Estimación de precio (según contrato/tarifario)
+    // Datos del servicio (para cálculos de contrato)
+    kilometros_reales: { type: Number, required: false }, // Kilómetros del viaje
+
+    // DEPRECATED: usar contrato_venta
     estimated_km: { type: Number, required: false },
     estimated_hours: { type: Number, required: false },
-    pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "tarifa_amva", "por_viaje", "por_trayecto"] },
+    pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"] },
     pricing_rate: { type: Number, required: false },
     estimated_price: { type: Number, required: false },
+
+    // Contrato de VENTA (lo que se cobra al cliente) - Coordinador Comercial
+    contrato_venta: {
+        contract_id: { type: MongoIdRef, ref: "Contract", required: false },
+        pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"] },
+        tarifa: { type: Number, required: false },
+        cantidad: { type: Number, required: false },
+        valor_calculado: { type: Number, required: false }
+    },
 
     // Vehículo y conductor (pueden ser null si está en estado "sin asignación")
     vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: false }, // Referencia al vehículo
@@ -56,7 +68,17 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
                     conductor_id: { type: MongoIdRef, ref: "User", required: true },
                     conductor_phone: { type: String, required: false },
 
-                    // "Contrato" por bus
+                    // Contrato de COMPRA por vehículo (lo que se paga al vehículo)
+                    // Se define al momento de asignar el vehículo
+                    contrato_compra: {
+                        tipo_contrato: { type: String, required: false, enum: ["fijo", "ocasional"] },
+                        pricing_mode: { type: String, required: false, enum: ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"] },
+                        tarifa: { type: Number, required: false },
+                        cantidad: { type: Number, required: false },
+                        valor_calculado: { type: Number, required: false }
+                    },
+
+                    // DEPRECATED: Mantener por compatibilidad
                     contract_id: { type: MongoIdRef, ref: "Contract", required: false },
                     contract_charge_mode: { type: String, required: false, enum: ["within_contract", "outside_contract", "no_contract"], default: "no_contract" },
                     contract_charge_amount: { type: Number, required: false, default: 0 },
@@ -115,6 +137,12 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     n_factura: { type: String, default: "" }, // N° FACTURA
     fecha_factura: { type: Date }, // FECHA de factura
     factura_id: { type: MongoIdRef, ref: "Factura", required: false }, // Referencia a la colección Facturas
+    preliquidaciones: {
+        type: [MongoIdRef],
+        ref: "Preliquidacion",
+        required: false,
+        default: []
+    }, // Referencias a las preliquidaciones
 
     // Utilidad
     utilidad: { type: Number, required: true, default: 0 }, // UTILIDAD (valor)
@@ -131,7 +159,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     accounting_status: { 
         type: String, 
         required: false, 
-        enum: ["no_iniciado", "pendiente_operacional", "operacional_completo", "prefactura_pendiente", "prefactura_aprobada", "listo_para_facturacion", "facturado"],
+        enum: ["no_iniciado", "pendiente_operacional", "operacional_completo", "prefactura_pendiente", "prefactura_aprobada", "listo_para_facturacion", "facturado", "listo_para_liquidar"],
         default: "no_iniciado"
     },
     prefactura: {

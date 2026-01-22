@@ -22,14 +22,14 @@ const VehicleBillsSchema: Schema = new Schema<VehicleBills>({
 
 const VehicleOperationalSchema: Schema = new Schema<VehicleOperational>({
     vehicle_id: {type: MongoIdRef, ref: "Vehicle", required: true},
-    solicitud_id: {type: MongoIdRef, ref: "Solicitud", required: false}, // Vincular gastos a solicitud específica
     bills: {type: [VehicleBillsSchema], required: false},
+    estado: {type: String, enum: ["no_liquidado", "liquidado"], required: true, default: "no_liquidado"},
     created: {type: Date, default: new Date()},
     uploaded_by: {type: MongoIdRef, ref: "User", required: true}
 })
 
-// Índice para búsquedas por solicitud
-VehicleOperationalSchema.index({ solicitud_id: 1 });
+// Índices
 VehicleOperationalSchema.index({ vehicle_id: 1, created: -1 });
+VehicleOperationalSchema.index({ estado: 1 });
 
 export default mongoose.model<VehicleOperational>("VehicleOperational", VehicleOperationalSchema)

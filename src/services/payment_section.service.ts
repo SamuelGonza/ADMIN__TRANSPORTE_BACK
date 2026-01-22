@@ -109,6 +109,13 @@ export class PaymentSectionService {
             placa: string;
             conductor_id: string;
             flota: "externo" | "propio" | "afiliado";
+            contrato_compra?: {
+                tipo_contrato?: string;
+                pricing_mode?: string;
+                tarifa?: number;
+                cantidad?: number;
+                valor_calculado?: number;
+            };
         }>;
         created_by?: string;
     }) {
@@ -155,9 +162,8 @@ export class PaymentSectionService {
                 // pero podrían calcularse por período o por vehículo
                 const totalGastosPreoperacionales = 0; // Por ahora 0, se puede implementar después
                 
-                // Calcular valor base (esto debería venir de la solicitud o del contrato)
-                // Por ahora usamos 0, se actualizará cuando se calcule la liquidación
-                const valorBase = 0;
+                // Valor base viene del contrato_compra del vehículo
+                const valorBase = assignment.contrato_compra?.valor_calculado || 0;
                 
                 // Calcular valor final
                 const valorFinal = Math.max(0, valorBase - totalGastosOperacionales - totalGastosPreoperacionales);
@@ -350,6 +356,9 @@ export class PaymentSectionService {
     /**
      * Actualizar cuenta de cobro por paymentSectionId y vehiculoId
      * Endpoint: PUT /api/v1/payment-sections/:paymentSectionId/cuenta-cobro/:vehiculoId
+     * 
+     * SIMPLIFICADO: Lee el contrato_compra de la solicitud para calcular valor_base
+     * O acepta pago_vehiculo para definirlo directamente
      */
     public async update_cuenta_cobro_by_ids({
         paymentSectionId,
@@ -357,6 +366,7 @@ export class PaymentSectionService {
         solicitud_id,
         vehiculo_id,
         valor_base,
+        pago_vehiculo,
         gastos_operacionales,
         gastos_preoperacionales,
         updated_by
@@ -365,7 +375,12 @@ export class PaymentSectionService {
         vehiculoId: string;
         solicitud_id: string;
         vehiculo_id: string;
-        valor_base: number;
+        valor_base?: number;
+        pago_vehiculo?: {
+            tipo_contrato: "fijo" | "ocasional";
+            pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+            tarifa: number;
+        };
         gastos_operacionales?: number;
         gastos_preoperacionales?: number;
         updated_by?: string;
@@ -377,42 +392,97 @@ export class PaymentSectionService {
                 throw new ResponseError(404, "Sección de pagos no encontrada");
             }
 
-            // 2. Validar que solicitud_id coincide con la solicitud asociada a la PaymentSection
+            // 2. Validar que solicitud_id coincide
             if (String(paymentSection.solicitud_id) !== String(solicitud_id)) {
                 throw new ResponseError(400, "El solicitud_id no coincide con la sección de pagos");
             }
 
-            // 3. Validar que vehiculo_id coincide con el parámetro de ruta
-            if (String(vehiculoId) !== String(vehiculo_id)) {
-                throw new ResponseError(400, "El vehiculo_id del body no coincide con el parámetro de ruta");
-            }
-
-            // 4. Validar que valor_base es un número positivo (o 0)
-            if (valor_base < 0 || isNaN(valor_base)) {
-                throw new ResponseError(400, "valor_base debe ser un número positivo o 0");
-            }
-
-            // 5. Buscar la cuenta de cobro del vehículo dentro de cuentas_cobro
+            // 3. Buscar la cuenta de cobro del vehículo
             const cuentaCobro = paymentSection.cuentas_cobro.find(
                 (cc: any) => String(cc.vehiculo_id) === String(vehiculoId)
             );
 
             if (!cuentaCobro) {
-                throw new ResponseError(404, "Cuenta de cobro no encontrada para este vehículo en la sección de pagos");
+                throw new ResponseError(404, "Cuenta de cobro no encontrada para este vehículo");
             }
 
-            // 6. Actualizar los valores
-            cuentaCobro.valor_base = valor_base;
-            if (gastos_operacionales !== undefined) {
-                if (gastos_operacionales < 0 || isNaN(gastos_operacionales)) {
-                    throw new ResponseError(400, "gastos_operacionales debe ser un número positivo o 0");
+            // 4. Obtener la solicitud para leer el contrato_compra del vehículo
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) {
+                throw new ResponseError(404, "Solicitud no encontrada");
+            }
+
+            // 5. Determinar valor_base
+            let valor_base_final = valor_base || 0;
+
+            // Si se envía pago_vehiculo, primero actualizar el contrato_compra en la solicitud
+            if (pago_vehiculo && pago_vehiculo.tarifa > 0) {
+                // Determinar cantidad
+                let cantidad = 0;
+                switch (pago_vehiculo.pricing_mode) {
+                    case "por_hora":
+                        cantidad = solicitud.total_horas || 0;
+                        break;
+                    case "por_kilometro":
+                        cantidad = (solicitud as any).kilometros_reales || 0;
+                        break;
+                    default:
+                        cantidad = 1;
                 }
+
+                // Calcular valor
+                let valor_calculado = 0;
+                if (pago_vehiculo.pricing_mode === "por_hora" || pago_vehiculo.pricing_mode === "por_kilometro") {
+                    valor_calculado = pago_vehiculo.tarifa * cantidad;
+                } else {
+                    valor_calculado = pago_vehiculo.tarifa;
+                }
+
+                valor_base_final = valor_calculado;
+
+                // Actualizar contrato_compra en la solicitud
+                const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+                const assignmentIndex = vehicle_assignments.findIndex(
+                    (a: any) => String(a.vehiculo_id?._id || a.vehiculo_id) === vehiculo_id
+                );
+
+                if (assignmentIndex !== -1) {
+                    vehicle_assignments[assignmentIndex].contrato_compra = {
+                        tipo_contrato: pago_vehiculo.tipo_contrato,
+                        pricing_mode: pago_vehiculo.pricing_mode,
+                        tarifa: pago_vehiculo.tarifa,
+                        cantidad,
+                        valor_calculado
+                    };
+                    (solicitud as any).vehicle_assignments = vehicle_assignments;
+                }
+
+                // Guardar pago_vehiculo en la cuenta de cobro también
+                (cuentaCobro as any).pago_vehiculo = {
+                    tipo_contrato: pago_vehiculo.tipo_contrato,
+                    pricing_mode: pago_vehiculo.pricing_mode,
+                    tarifa: pago_vehiculo.tarifa,
+                    cantidad,
+                    valor_calculado
+                };
+            } else {
+                // Si no hay pago_vehiculo, leer del contrato_compra de la solicitud
+                const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+                const assignment = vehicle_assignments.find(
+                    (a: any) => String(a.vehiculo_id?._id || a.vehiculo_id) === vehiculo_id
+                );
+
+                if (assignment?.contrato_compra?.valor_calculado) {
+                    valor_base_final = assignment.contrato_compra.valor_calculado;
+                }
+            }
+
+            // 6. Actualizar valores en cuenta de cobro
+            cuentaCobro.valor_base = valor_base_final;
+            if (gastos_operacionales !== undefined) {
                 cuentaCobro.gastos_operacionales = gastos_operacionales;
             }
             if (gastos_preoperacionales !== undefined) {
-                if (gastos_preoperacionales < 0 || isNaN(gastos_preoperacionales)) {
-                    throw new ResponseError(400, "gastos_preoperacionales debe ser un número positivo o 0");
-                }
                 cuentaCobro.gastos_preoperacionales = gastos_preoperacionales;
             }
 
@@ -420,10 +490,9 @@ export class PaymentSectionService {
             cuentaCobro.valor_final = Math.max(0, 
                 cuentaCobro.valor_base - cuentaCobro.gastos_operacionales - cuentaCobro.gastos_preoperacionales
             );
-
             cuentaCobro.updated = new Date();
 
-            // 8. Recalcular los totales de la PaymentSection
+            // 8. Recalcular totales del PaymentSection
             paymentSection.total_valor_base = paymentSection.cuentas_cobro.reduce(
                 (sum: number, cc: any) => sum + cc.valor_base, 0
             );
@@ -442,21 +511,17 @@ export class PaymentSectionService {
                 paymentSection.updated_by = updated_by as any;
             }
 
-            // 9. Guardar los cambios
             await paymentSection.save();
 
-            // 10. Actualizar valor_cancelado en la solicitud asociada
-            const totalValorCancelado = paymentSection.total_valor_base;
-            await solicitudModel.findByIdAndUpdate(
-                paymentSection.solicitud_id,
-                { valor_cancelado: totalValorCancelado },
-                { new: false } // No necesitamos retornar el documento actualizado
-            );
+            // 9. Actualizar valor_cancelado en la solicitud
+            solicitud.valor_cancelado = paymentSection.total_valor_base;
+            (solicitud as any).last_modified_by = updated_by;
+            await solicitud.save();
 
-            // 11. Recalcular utilidad automáticamente
+            // 10. Recalcular utilidad
             await this.recalculateUtilidad(String(paymentSection.solicitud_id));
 
-            // 12. Retornar la PaymentSection actualizada (con populate)
+            // 11. Retornar PaymentSection actualizada
             const updatedPaymentSection = await paymentSectionModel
                 .findById(paymentSectionId)
                 .populate("solicitud_id")
@@ -466,7 +531,6 @@ export class PaymentSectionService {
                 .populate("cuentas_cobro.propietario.user_id", "full_name document")
                 .lean();
 
-            // Normalizar PaymentSection para asegurar IDs como strings y valor_base presente
             return this.normalizePaymentSection(updatedPaymentSection);
         } catch (error) {
             if (error instanceof ResponseError) throw error;

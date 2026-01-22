@@ -189,6 +189,14 @@ export class SolicitudesService {
                 vehicle = await vehicleModel
                     .findById(vehiculo_id)
                     .populate("owner_id.company_id", "company_name document logo")
+                    .populate({
+                        path: "owner_id.user_id",
+                        select: "company_id",
+                        populate: {
+                            path: "company_id",
+                            select: "company_name document logo"
+                        }
+                    })
                     .lean();
                 if (!vehicle) throw new ResponseError(404, "Vehículo no encontrado");
 
@@ -205,6 +213,14 @@ export class SolicitudesService {
                 vehicle = await vehicleModel
                 .findById((solicitud as any).vehiculo_id)
                 .populate("owner_id.company_id", "company_name document logo")
+                .populate({
+                    path: "owner_id.user_id",
+                    select: "company_id",
+                    populate: {
+                        path: "company_id",
+                        select: "company_name document logo"
+                    }
+                })
                 .lean();
             if (!vehicle) throw new ResponseError(404, "Vehículo no encontrado");
 
@@ -217,15 +233,34 @@ export class SolicitudesService {
                 assignedPassengers = (solicitud as any).n_pasajeros || (vehicle as any).seats || 0;
             }
 
-            // Empresa transportadora: preferir owner_id.company_id; si no, fallback a empresa del cliente
-            let company: any = (vehicle as any).owner_id?.company_id || null;
+            // Empresa transportadora: obtener según el tipo de owner_id
+            let company: any = null;
+            const ownerId = (vehicle as any).owner_id;
+            
+            if (ownerId) {
+                if (ownerId.type === 'Company' && ownerId.company_id) {
+                    // Si el propietario es una compañía, usar directamente company_id (ya está populado)
+                    company = ownerId.company_id;
+                } else if (ownerId.type === 'User' && ownerId.user_id) {
+                    // Si el propietario es un usuario, obtener su compañía (ya está populada)
+                    const userId = ownerId.user_id;
+                    if (userId && (userId as any).company_id) {
+                        company = (userId as any).company_id; // Ya está populado con el populate anidado
+                    }
+                }
+            }
+            
+            // Fallback: empresa del cliente si no se encontró en el vehículo
             if (!company) {
                 const client = (solicitud as any).cliente;
                 if (client && (client as any).company_id) {
-                company = await companyModel.findById(String((client as any).company_id)).lean();
+                    company = await companyModel.findById(String((client as any).company_id)).lean();
                 }
             }
-            if (!company) throw new ResponseError(404, "No se pudo obtener la empresa transportadora");
+            
+            if (!company) {
+                throw new ResponseError(404, "No se pudo obtener la empresa transportadora");
+            }
 
             // Información del cliente
             const client = (solicitud as any).cliente;
@@ -713,10 +748,11 @@ export class SolicitudesService {
                 }
             } else {
                 // Comportamiento tradicional: un solo vehículo
-            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
-                placa: payload.placa,
+                const vehicleServices = new VehicleServices();
+                const vehicleData = await vehicleServices.get_vehicle_by_placa({ 
+                    placa: payload.placa,
                     company_id: client_company_id_str
-            });
+                });
 
             // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
             const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
@@ -1069,10 +1105,11 @@ export class SolicitudesService {
                     throw new ResponseError(400, "placa es requerida cuando no se usa vehicle_assignments");
                 }
                 
-            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
-                placa: payload.placa,
-                company_id 
-            });
+                const vehicleServices = new VehicleServices();
+                const vehicleData = await vehicleServices.get_vehicle_by_placa({ 
+                    placa: payload.placa,
+                    company_id 
+                });
 
             // Determinar conductor: por defecto el principal, o el seleccionado si viene en payload
             const vehicle_main_driver_id = vehicleData.conductor?._id ? String(vehicleData.conductor._id) : "";
@@ -1335,7 +1372,8 @@ export class SolicitudesService {
         company_id?: string
     }) {
         try {
-            const vehicleData = await SolicitudesService.VehicleServices.get_vehicle_by_placa({ 
+            const vehicleServices = new VehicleServices();
+            const vehicleData = await vehicleServices.get_vehicle_by_placa({ 
                 placa, 
                 company_id 
             });
@@ -2056,6 +2094,7 @@ export class SolicitudesService {
     /**
      * Helper: Procesar vehicle_assignments del payload
      * Valida y construye el array de vehicle_assignments con toda la información necesaria
+     * Ahora soporta contrato_compra para definir cómo se paga al vehículo
      */
     private async process_vehicle_assignments({
         vehicle_assignments,
@@ -2070,6 +2109,14 @@ export class SolicitudesService {
             placa: string;
             conductor_id: string;
             assigned_passengers: number;
+            // Contrato de compra (cómo se paga al vehículo)
+            contrato_compra?: {
+                tipo_contrato: "fijo" | "ocasional";
+                pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+                tarifa: number;
+                cantidad?: number;
+            };
+            // DEPRECATED
             contract_id?: string;
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
             contract_charge_amount?: number;
@@ -2086,6 +2133,13 @@ export class SolicitudesService {
         assigned_passengers: number;
         conductor_id: any;
         conductor_phone: string;
+        contrato_compra?: {
+            tipo_contrato: "fijo" | "ocasional";
+            pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+            tarifa: number;
+            cantidad?: number;
+            valor_calculado?: number;
+        };
         contract_id?: any;
         contract_charge_mode: "within_contract" | "outside_contract" | "no_contract";
         contract_charge_amount: number;
@@ -2168,6 +2222,30 @@ export class SolicitudesService {
                 throw new ResponseError(404, `Conductor ${assignment.conductor_id} no encontrado`);
             }
 
+            // Calcular valor si hay contrato_compra con tarifa y cantidad
+            let contrato_compra_final: any = undefined;
+            if (assignment.contrato_compra && assignment.contrato_compra.tarifa) {
+                const { tipo_contrato, pricing_mode, tarifa, cantidad } = assignment.contrato_compra;
+                let valor_calculado: number | undefined = undefined;
+                
+                if (cantidad && cantidad > 0) {
+                    if (pricing_mode === "por_hora" || pricing_mode === "por_kilometro") {
+                        valor_calculado = tarifa * cantidad;
+                    } else {
+                        // por_distancia, por_viaje, por_trayecto = valor fijo
+                        valor_calculado = tarifa;
+                    }
+                }
+
+                contrato_compra_final = {
+                    tipo_contrato,
+                    pricing_mode,
+                    tarifa,
+                    cantidad,
+                    valor_calculado
+                };
+            }
+
             // Construir asignación final
             finalAssignments.push({
                 vehiculo_id: vehicle._id,
@@ -2176,6 +2254,7 @@ export class SolicitudesService {
                 assigned_passengers: assigned,
                 conductor_id: new mongoose.Types.ObjectId(assignment.conductor_id),
                 conductor_phone: (conductor as any).contact?.phone || "",
+                contrato_compra: contrato_compra_final,
                 contract_id: assignment.contract_id 
                     ? new mongoose.Types.ObjectId(assignment.contract_id)
                     : (default_contract_id ? new mongoose.Types.ObjectId(default_contract_id) : undefined),
@@ -2192,6 +2271,7 @@ export class SolicitudesService {
 
     /**
      * Confirmar asignación multi-vehículo (persistir en la solicitud)
+     * Incluye contrato_compra para definir cómo se paga a cada vehículo
      * Valida:
      * - suma de assigned_passengers >= requested_passengers
      * - cada conductor pertenece al vehículo (driver principal o possible_drivers)
@@ -2211,6 +2291,14 @@ export class SolicitudesService {
             vehiculo_id: string;
             conductor_id: string;
             assigned_passengers: number;
+            // Contrato de compra (cómo se paga al vehículo)
+            contrato_compra?: {
+                tipo_contrato: "fijo" | "ocasional";
+                pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+                tarifa: number;
+                cantidad?: number;
+            };
+            // DEPRECATED
             contract_id?: string;
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract";
             contract_charge_amount?: number;
@@ -2246,6 +2334,8 @@ export class SolicitudesService {
             const vehicleMap = new Map<string, any>(vehicles.map(v => [String((v as any)._id), v]));
 
             const finalAssignments: any[] = [];
+            let totalValorCancelado = 0;
+
             for (const a of assignments) {
                 const v = vehicleMap.get(String(a.vehiculo_id));
                 if (!v) throw new ResponseError(400, "Vehículo inválido en assignments");
@@ -2263,6 +2353,31 @@ export class SolicitudesService {
                 if (!allowed.has(String(a.conductor_id))) throw new ResponseError(400, `El conductor no está asociado al vehículo ${v.placa}`);
 
                 const conductor = await SolicitudesService.UserService.get_user_by_id({ id: String(a.conductor_id) });
+
+                // Procesar contrato_compra si existe
+                let contrato_compra_final: any = undefined;
+                if (a.contrato_compra && a.contrato_compra.tarifa) {
+                    const { tipo_contrato, pricing_mode, tarifa, cantidad } = a.contrato_compra;
+                    let valor_calculado: number | undefined = undefined;
+                    
+                    if (cantidad && cantidad > 0) {
+                        if (pricing_mode === "por_hora" || pricing_mode === "por_kilometro") {
+                            valor_calculado = tarifa * cantidad;
+                        } else {
+                            valor_calculado = tarifa;
+                        }
+                        totalValorCancelado += valor_calculado;
+                    }
+
+                    contrato_compra_final = {
+                        tipo_contrato,
+                        pricing_mode,
+                        tarifa,
+                        cantidad,
+                        valor_calculado
+                    };
+                }
+
                 finalAssignments.push({
                     vehiculo_id: v._id,
                     placa: v.placa,
@@ -2270,7 +2385,7 @@ export class SolicitudesService {
                     assigned_passengers: assigned,
                     conductor_id: a.conductor_id,
                     conductor_phone: (conductor as any).contact?.phone || "",
-
+                    contrato_compra: contrato_compra_final,
                     contract_id: a.contract_id || undefined,
                     contract_charge_mode: a.contract_charge_mode || "no_contract",
                     contract_charge_amount: a.contract_charge_amount || 0,
@@ -2283,6 +2398,11 @@ export class SolicitudesService {
             (solicitud as any).requested_passengers = requested_passengers;
             (solicitud as any).vehicle_assignments = finalAssignments;
 
+            // Actualizar valor_cancelado si hay contratos de compra calculados
+            if (totalValorCancelado > 0) {
+                solicitud.valor_cancelado = totalValorCancelado;
+            }
+
             // Mantener compatibilidad: setear "principal" con el primer ítem
             const first = finalAssignments[0];
             if (first) {
@@ -2293,12 +2413,15 @@ export class SolicitudesService {
                 (solicitud as any).conductor_phone = first.conductor_phone || "";
             }
 
-            // metadata (opcional)
-            if (assigned_by) (solicitud as any).created_by = (solicitud as any).created_by || assigned_by;
+            // metadata
+            if (assigned_by) {
+                (solicitud as any).assigned_vehicles_by = assigned_by;
+                (solicitud as any).assigned_vehicles_at = new Date();
+            }
 
             await solicitud.save();
 
-            // Si hay cargos dentro de contrato por bus, aplicarlos ahora
+            // Si hay cargos dentro de contrato por bus, aplicarlos ahora (DEPRECATED)
             for (const a of finalAssignments) {
                 if (a.contract_charge_mode === "within_contract") {
                     if (!a.contract_id) throw new ResponseError(400, "contract_id es requerido cuando contract_charge_mode = within_contract");
@@ -2517,9 +2640,10 @@ export class SolicitudesService {
     }
 
     /**
-     * Calcular liquidación automática
-     * Fórmula: Total Servicios Realizados - Gastos = Total a Pagar
-     * Calcula: utilidad = valor_a_facturar - valor_cancelado - total_gastos_operacionales
+     * Calcular liquidación básica (sin gastos operacionales)
+     * Fórmula: Total Servicios - Gastos Cancelados = Utilidad
+     * NOTA: Los gastos operacionales y preoperacionales ahora se liquidan por separado en preliquidaciones
+     * Calcula: utilidad = valor_a_facturar - valor_cancelado
      * Actualiza las cuentas de cobro en la sección de pagos
      */
     public async calcular_liquidacion({
@@ -2531,24 +2655,15 @@ export class SolicitudesService {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
 
-            // Obtener todos los gastos operacionales vinculados a esta solicitud
-            const gastos = await vhc_operationalModel.find({ solicitud_id }).lean();
-
-            // Calcular total de gastos operacionales
-            const total_gastos_operacionales = gastos.reduce((sum, gasto) => {
-                const billsTotal = (gasto.bills || []).reduce((bSum: number, bill: any) => bSum + (bill.value || 0), 0);
-                return sum + billsTotal;
-            }, 0);
-
-            // Calcular utilidad: Total Servicios - Gastos Cancelados - Gastos Operacionales
-            const total_gastos = (solicitud.valor_cancelado || 0) + total_gastos_operacionales;
-            const utilidad = (solicitud.valor_a_facturar || 0) - total_gastos;
+            // Calcular utilidad: Total Servicios - Gastos Cancelados
+            // Los gastos operacionales ahora se liquidan por separado en preliquidaciones
+            const utilidad = (solicitud.valor_a_facturar || 0) - (solicitud.valor_cancelado || 0);
             const porcentaje_utilidad = solicitud.valor_a_facturar > 0 
                 ? (utilidad / solicitud.valor_a_facturar) * 100 
                 : 0;
 
             // Actualizar campos
-            solicitud.total_gastos_operacionales = total_gastos_operacionales;
+            solicitud.total_gastos_operacionales = 0; // Ya no se calculan aquí
             solicitud.utilidad = utilidad;
             solicitud.porcentaje_utilidad = porcentaje_utilidad;
             
@@ -2575,25 +2690,17 @@ export class SolicitudesService {
                 });
             }
 
-            // Actualizar cada cuenta de cobro con los gastos operacionales
+            // Actualizar cada cuenta de cobro (sin gastos operacionales, se liquidan por separado)
             for (const vehicleId of vehicleIds) {
-                // Obtener gastos operacionales específicos de este vehículo
-                const gastosVehiculo = gastos.filter((g: any) => String(g.vehicle_id) === vehicleId);
-                const totalGastosVehiculo = gastosVehiculo.reduce((sum, gasto) => {
-                    const billsTotal = (gasto.bills || []).reduce((bSum: number, bill: any) => bSum + (bill.value || 0), 0);
-                    return sum + billsTotal;
-                }, 0);
-
                 // Calcular valor base (valor a pagar al propietario)
-                // Por ahora usamos valor_cancelado dividido entre vehículos, pero esto debería venir del contrato o cálculo específico
                 const valorBasePorVehiculo = vehicleIds.length > 0 ? (solicitud.valor_cancelado || 0) / vehicleIds.length : 0;
 
                 await paymentSectionService.update_cuenta_cobro_values({
                     solicitud_id,
                     vehiculo_id: vehicleId,
                     valor_base: valorBasePorVehiculo,
-                    gastos_operacionales: totalGastosVehiculo,
-                    gastos_preoperacionales: 0 // Por ahora 0, se puede implementar después
+                    gastos_operacionales: 0, // Ya no se incluyen aquí, se liquidan por separado
+                    gastos_preoperacionales: 0 // Ya no se incluyen aquí, se liquidan por separado
                 });
             }
 
@@ -2602,8 +2709,8 @@ export class SolicitudesService {
                 data: {
                     valor_a_facturar: solicitud.valor_a_facturar,
                     valor_cancelado: solicitud.valor_cancelado,
-                    total_gastos_operacionales,
-                    total_gastos,
+                    total_gastos_operacionales: 0,
+                    total_gastos: solicitud.valor_cancelado || 0,
                     utilidad,
                     porcentaje_utilidad,
                     valor_documento_equivalente: solicitud.valor_documento_equivalente
@@ -2616,8 +2723,8 @@ export class SolicitudesService {
     }
 
     /**
-     * Establecer valores de venta (solo coordinador comercial)
-     * El coordinador comercial establece valor_a_facturar (valor de venta)
+     * Establecer valores de venta y contrato (solo coordinador comercial)
+     * El coordinador comercial establece valor_a_facturar (valor de venta) y selecciona el contrato
      * Automáticamente recalcula utilidad si ya hay costos establecidos
      */
     public async set_financial_values_by_comercial({
@@ -2629,11 +2736,63 @@ export class SolicitudesService {
         comercial_id: string,
         payload: {
             valor_a_facturar: number,  // Valor a facturar al cliente (venta)
+            // Contrato (opcional) - el comercial selecciona el contrato
+            contract_id?: string,
+            contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract",
+            contract_charge_amount?: number,
         }
     }) {
         try {
             const solicitud = await solicitudModel.findById(solicitud_id);
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Obtener información del cliente para validar contrato
+            const client_doc = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
+            const company_id = String(client_doc.company_id);
+
+            // Validar y procesar contrato si está presente
+            let contract_validated: any = null;
+            if (payload.contract_id) {
+                // Validar que el contrato existe
+                contract_validated = await contractModel.findById(payload.contract_id).lean();
+                if (!contract_validated) {
+                    throw new ResponseError(404, "Contrato no encontrado");
+                }
+                
+                // Validar que el contrato pertenece al cliente
+                if (String(contract_validated.client_id) !== String(solicitud.cliente)) {
+                    throw new ResponseError(400, "El contrato no pertenece al cliente de la solicitud");
+                }
+                
+                // Validar que el contrato pertenece a la empresa
+                const contract_company_id = typeof contract_validated.company_id === 'object' 
+                    ? (contract_validated.company_id as any)._id || contract_validated.company_id
+                    : contract_validated.company_id;
+                if (String(contract_company_id) !== company_id) {
+                    throw new ResponseError(401, "El contrato no pertenece a la empresa");
+                }
+                
+                // Validar que el contrato está activo
+                if (!contract_validated.is_active) {
+                    throw new ResponseError(400, "El contrato está inactivo");
+                }
+                
+                // Si contract_charge_mode es "within_contract", validar disponibilidad del presupuesto
+                if (payload.contract_charge_mode === "within_contract") {
+                    const contract_amount = payload.contract_charge_amount || payload.valor_a_facturar || 0;
+                    const current_consumed = contract_validated.valor_consumido || 0;
+                    const budget = contract_validated.valor_presupuesto;
+                    
+                    // Si hay presupuesto definido, validar que no se exceda
+                    if (budget != null && (current_consumed + contract_amount) > budget) {
+                        throw new ResponseError(400, `El cargo excedería el presupuesto del contrato. Presupuesto: ${budget}, Consumido: ${current_consumed}, Nuevo cargo: ${contract_amount}`);
+                    }
+                }
+
+                // Actualizar campos de contrato en la solicitud
+                solicitud.contract_id = payload.contract_id as any;
+                solicitud.contract_charge_mode = (payload.contract_charge_mode || "no_contract") as any;
+            }
 
             // Actualizar valor de venta
             solicitud.valor_a_facturar = payload.valor_a_facturar;
@@ -2656,21 +2815,27 @@ export class SolicitudesService {
 
             await solicitud.save();
 
-            // Si hay contrato y está en modo "within_contract", cargar al contrato
-            if (solicitud.contract_charge_mode === "within_contract" && solicitud.contract_id) {
+            // Procesar cargo al contrato si está en modo "within_contract"
+            const charge_mode = payload.contract_charge_mode || solicitud.contract_charge_mode;
+            const contract_id_to_use = payload.contract_id || (solicitud.contract_id ? String(solicitud.contract_id) : null);
+            
+            if (charge_mode === "within_contract" && contract_id_to_use) {
+                // Determinar el monto a cargar (usar contract_charge_amount si se proporciona, sino valor_a_facturar)
+                const amount_to_charge = payload.contract_charge_amount || payload.valor_a_facturar;
+                
                 // Si aún no se ha cargado al contrato (contract_charge_amount es 0), cargarlo ahora
-                if (!solicitud.contract_charge_amount || solicitud.contract_charge_amount === 0) {
-                    const client_doc = await SolicitudesService.ClientService.get_client_by_id({ id: String(solicitud.cliente) });
+                const current_charge = solicitud.contract_charge_amount || 0;
+                if (current_charge === 0 && amount_to_charge > 0) {
                     await SolicitudesService.ContractsService.charge_contract({
-                        contract_id: String(solicitud.contract_id),
-                        company_id: String(client_doc.company_id),
-                        amount: payload.valor_a_facturar,
+                        contract_id: contract_id_to_use,
+                        company_id: company_id,
+                        amount: amount_to_charge,
                         solicitud_id: solicitud._id.toString(),
                         created_by: comercial_id,
                         notes: `Cargo automático por establecimiento de valores financieros - Solicitud ${solicitud.he || solicitud._id.toString()}`
                     });
 
-                    solicitud.contract_charge_amount = payload.valor_a_facturar as any;
+                    solicitud.contract_charge_amount = amount_to_charge as any;
                     await solicitud.save();
                 }
             }
@@ -2690,7 +2855,7 @@ export class SolicitudesService {
             await solicitud.save();
 
             return {
-                message: "Valores de venta establecidos exitosamente",
+                message: "Valores de venta y contrato establecidos exitosamente",
                 solicitud: solicitud.toObject()
             };
         } catch (error) {
@@ -5394,20 +5559,13 @@ export class SolicitudesService {
      * @param user_id ID del usuario que sube el archivo
      */
     public async process_operational_bills_excel({
-        solicitud_id,
         excelFile,
         user_id
     }: {
-        solicitud_id: string;
         excelFile: Express.Multer.File;
         user_id: string;
     }) {
         try {
-            // Validar que la solicitud exista
-            const solicitud = await solicitudModel.findById(solicitud_id);
-            if (!solicitud) {
-                throw new ResponseError(404, "Solicitud no encontrada");
-            }
 
             // Leer el archivo Excel
             const workbook = XLSX.read(excelFile.buffer, { type: 'buffer' });
@@ -5518,7 +5676,6 @@ export class SolicitudesService {
                     await vehicleServices.create_operational_bills({
                         vehicle_id: vehiculo_id,
                         user_id: user_id,
-                        solicitud_id: solicitud_id,
                         bills: gastos.map(g => ({
                             type_bill: g.type_bill,
                             value: g.value,
@@ -5541,23 +5698,8 @@ export class SolicitudesService {
                 }
             }
 
-            // Guardar auditoría de subida de operacionales
-            const solicitudToUpdate = await solicitudModel.findById(solicitud_id);
-            if (solicitudToUpdate && user_id) {
-                (solicitudToUpdate as any).uploaded_operationals_by = user_id;
-                (solicitudToUpdate as any).uploaded_operationals_at = new Date();
-                (solicitudToUpdate as any).last_modified_by = user_id;
-                await solicitudToUpdate.save();
-            }
-
-            // Recalcular liquidación automáticamente
-            try {
-                await this.calcular_liquidacion({ solicitud_id });
-                await this.update_accounting_status_on_operational_upload({ solicitud_id });
-            } catch (calcError) {
-                console.error("Error al recalcular liquidación después de subir Excel:", calcError);
-                // No lanzar error, solo loguear
-            }
+            // Los gastos se crean sin vincular a ninguna solicitud
+            // Se marcan automáticamente como "no_liquidado" por el servicio de vehículos
 
             // Verificar si hubo errores
             const errores = resultados.filter(r => r.error);
@@ -6010,6 +6152,756 @@ export class SolicitudesService {
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "Error al rechazar prefactura");
+        }
+    }
+
+    // ==========================================
+    // CONTRATOS DE VENTA Y COMPRA
+    // ==========================================
+
+    /**
+     * Calcular el valor según el modo de pricing y la cantidad
+     * @param pricing_mode Modo de cobro (por_hora, por_kilometro, etc.)
+     * @param tarifa Tarifa según el modo
+     * @param cantidad Cantidad (horas, km, etc.)
+     * @returns Valor calculado
+     */
+    private calcular_valor_contrato({
+        pricing_mode,
+        tarifa,
+        cantidad
+    }: {
+        pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+        tarifa: number;
+        cantidad: number;
+    }): number {
+        switch (pricing_mode) {
+            case "por_hora":
+            case "por_kilometro":
+                // tarifa × cantidad
+                return tarifa * cantidad;
+            case "por_distancia":
+            case "por_viaje":
+            case "por_trayecto":
+                // Valor fijo por trayecto/viaje
+                return tarifa;
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * Obtener la tarifa del contrato según el modo de pricing
+     */
+    private obtener_tarifa_contrato(
+        contract: any, 
+        pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto"
+    ): number | null {
+        if (!contract?.cobro) return null;
+        
+        switch (pricing_mode) {
+            case "por_hora":
+                return contract.cobro.por_hora || null;
+            case "por_kilometro":
+                return contract.cobro.por_kilometro || null;
+            case "por_distancia":
+                return contract.cobro.por_distancia || null;
+            case "por_viaje":
+                return contract.cobro.por_viaje || null;
+            case "por_trayecto":
+                return contract.cobro.por_trayecto || null;
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Calcular total de horas entre fecha_inicio y fecha_final + hora_inicio y hora_final
+     */
+    private calcular_total_horas(solicitud: any): number {
+        if (!solicitud.fecha || !solicitud.fecha_final) return 0;
+        
+        const fecha_inicio = new Date(solicitud.fecha);
+        const fecha_final = new Date(solicitud.fecha_final);
+        
+        // Aplicar hora_inicio si existe
+        if (solicitud.hora_inicio) {
+            const [hours, minutes] = solicitud.hora_inicio.split(':').map(Number);
+            if (!isNaN(hours)) fecha_inicio.setHours(hours, minutes || 0, 0, 0);
+        }
+        
+        // Aplicar hora_final si existe
+        if (solicitud.hora_final) {
+            const [hours, minutes] = solicitud.hora_final.split(':').map(Number);
+            if (!isNaN(hours)) fecha_final.setHours(hours, minutes || 0, 0, 0);
+        }
+        
+        const diff_ms = fecha_final.getTime() - fecha_inicio.getTime();
+        const diff_hours = diff_ms / (1000 * 60 * 60);
+        
+        return Math.max(0, Math.round(diff_hours * 100) / 100); // Redondear a 2 decimales
+    }
+
+    /**
+     * Actualizar datos del servicio (hora_final, kilometros_reales)
+     * Recalcula AUTOMÁTICAMENTE todos los contratos que dependan de horas/km
+     */
+    public async update_datos_servicio({
+        solicitud_id,
+        user_id,
+        payload
+    }: {
+        solicitud_id: string;
+        user_id: string;
+        payload: {
+            hora_final?: string;
+            kilometros_reales?: number;
+        };
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Actualizar campos si se proporcionan
+            if (payload.hora_final !== undefined) {
+                solicitud.hora_final = payload.hora_final;
+                solicitud.total_horas = this.calcular_total_horas(solicitud);
+            }
+
+            if (payload.kilometros_reales !== undefined) {
+                (solicitud as any).kilometros_reales = payload.kilometros_reales;
+            }
+
+            // RECALCULAR AUTOMÁTICAMENTE todos los contratos de compra
+            const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+            let total_valor_cancelado = 0;
+
+            for (const assignment of vehicle_assignments) {
+                const contrato = assignment.contrato_compra;
+                if (!contrato?.tarifa) continue;
+
+                // Determinar cantidad según el modo
+                let cantidad = contrato.cantidad;
+                if (contrato.pricing_mode === "por_hora") {
+                    cantidad = solicitud.total_horas || 0;
+                } else if (contrato.pricing_mode === "por_kilometro") {
+                    cantidad = (solicitud as any).kilometros_reales || 0;
+                }
+
+                // Calcular valor
+                let valor_calculado = 0;
+                if (contrato.pricing_mode === "por_hora" || contrato.pricing_mode === "por_kilometro") {
+                    valor_calculado = contrato.tarifa * cantidad;
+                } else {
+                    valor_calculado = contrato.tarifa;
+                }
+
+                // Actualizar contrato
+                assignment.contrato_compra.cantidad = cantidad;
+                assignment.contrato_compra.valor_calculado = valor_calculado;
+                total_valor_cancelado += valor_calculado;
+            }
+
+            (solicitud as any).vehicle_assignments = vehicle_assignments;
+            solicitud.valor_cancelado = total_valor_cancelado;
+
+            // RECALCULAR contrato de venta si existe
+            const contrato_venta = (solicitud as any).contrato_venta;
+            if (contrato_venta?.tarifa) {
+                let cantidad_venta = contrato_venta.cantidad;
+                if (contrato_venta.pricing_mode === "por_hora") {
+                    cantidad_venta = solicitud.total_horas || 0;
+                } else if (contrato_venta.pricing_mode === "por_kilometro") {
+                    cantidad_venta = (solicitud as any).kilometros_reales || 0;
+                }
+
+                let valor_venta = 0;
+                if (contrato_venta.pricing_mode === "por_hora" || contrato_venta.pricing_mode === "por_kilometro") {
+                    valor_venta = contrato_venta.tarifa * cantidad_venta;
+                } else {
+                    valor_venta = contrato_venta.tarifa;
+                }
+
+                contrato_venta.cantidad = cantidad_venta;
+                contrato_venta.valor_calculado = valor_venta;
+                (solicitud as any).contrato_venta = contrato_venta;
+                solicitud.valor_a_facturar = valor_venta;
+            }
+
+            // Recalcular utilidad
+            const total_gastos = solicitud.total_gastos_operacionales || 0;
+            const utilidad = (solicitud.valor_a_facturar || 0) - solicitud.valor_cancelado - total_gastos;
+            const porcentaje_utilidad = solicitud.valor_a_facturar > 0 
+                ? (utilidad / solicitud.valor_a_facturar) * 100 
+                : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            // Sincronizar PaymentSection para que tenga los valores actualizados
+            try {
+                const paymentSectionService = new PaymentSectionService();
+                const vehicleAssignmentsForPS = vehicle_assignments.map((a: any) => ({
+                    vehiculo_id: String(a.vehiculo_id?._id || a.vehiculo_id),
+                    placa: a.placa,
+                    conductor_id: String(a.conductor_id?._id || a.conductor_id),
+                    flota: a.flota || 'externo',
+                    contrato_compra: a.contrato_compra
+                }));
+                await paymentSectionService.create_or_update_payment_section({
+                    solicitud_id,
+                    company_id: (solicitud as any).bitacora_id?.company_id?.toString() || '',
+                    vehicle_assignments: vehicleAssignmentsForPS,
+                    created_by: user_id
+                });
+            } catch (psError) {
+                console.error('Error sincronizando PaymentSection:', psError);
+            }
+
+            return {
+                message: "Datos actualizados y contratos recalculados",
+                total_horas: solicitud.total_horas,
+                kilometros_reales: (solicitud as any).kilometros_reales,
+                valor_cancelado: solicitud.valor_cancelado,
+                valor_a_facturar: solicitud.valor_a_facturar,
+                utilidad: solicitud.utilidad
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al actualizar datos del servicio");
+        }
+    }
+
+    /**
+     * Establecer contrato de VENTA (solo coordinador comercial)
+     * Calcula automáticamente el valor_a_facturar basado en el contrato seleccionado
+     */
+    public async set_contrato_venta({
+        solicitud_id,
+        comercial_id,
+        payload
+    }: {
+        solicitud_id: string;
+        comercial_id: string;
+        payload: {
+            contract_id: string;                     // ID del contrato a usar
+            pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+            cantidad?: number;                       // Opcional: si no se proporciona, se calcula de la solicitud
+            valor_manual?: number;                   // Opcional: sobrescribir el cálculo
+            usar_valor_manual?: boolean;             // Si true, usar valor_manual
+            notas?: string;
+            // Datos del servicio (opcional, para actualizar junto con el contrato)
+            hora_final?: string;
+            kilometros_reales?: number;
+        };
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Obtener el contrato
+            const contract = await contractModel.findById(payload.contract_id).lean();
+            if (!contract) throw new ResponseError(404, "Contrato no encontrado");
+
+            // Validar que el contrato pertenece al cliente
+            if (String(contract.client_id) !== String(solicitud.cliente)) {
+                throw new ResponseError(400, "El contrato no pertenece al cliente de esta solicitud");
+            }
+
+            // Validar que el contrato está activo
+            if (!contract.is_active) {
+                throw new ResponseError(400, "El contrato está inactivo");
+            }
+
+            // Actualizar datos del servicio si se proporcionan
+            if (payload.hora_final !== undefined) {
+                solicitud.hora_final = payload.hora_final;
+                solicitud.total_horas = this.calcular_total_horas(solicitud);
+            }
+            if (payload.kilometros_reales !== undefined) {
+                (solicitud as any).kilometros_reales = payload.kilometros_reales;
+            }
+
+            // Obtener la tarifa del contrato
+            const tarifa = this.obtener_tarifa_contrato(contract, payload.pricing_mode);
+            if (tarifa === null) {
+                throw new ResponseError(400, `El contrato no tiene tarifa definida para el modo "${payload.pricing_mode}"`);
+            }
+
+            // Determinar la cantidad
+            let cantidad = payload.cantidad;
+            if (cantidad === undefined) {
+                // Calcular automáticamente según el modo
+                switch (payload.pricing_mode) {
+                    case "por_hora":
+                        cantidad = solicitud.total_horas || 0;
+                        break;
+                    case "por_kilometro":
+                        cantidad = (solicitud as any).kilometros_reales || 0;
+                        break;
+                    case "por_distancia":
+                    case "por_viaje":
+                    case "por_trayecto":
+                        cantidad = 1; // Valor fijo
+                        break;
+                }
+            }
+
+            // Calcular el valor
+            const valor_calculado = this.calcular_valor_contrato({
+                pricing_mode: payload.pricing_mode,
+                tarifa,
+                cantidad: cantidad || 0
+            });
+
+            // Determinar el valor final a usar
+            const usar_valor_manual = payload.usar_valor_manual === true && payload.valor_manual !== undefined;
+            const valor_final = usar_valor_manual ? payload.valor_manual! : valor_calculado;
+
+            // Guardar contrato_venta
+            (solicitud as any).contrato_venta = {
+                contract_id: payload.contract_id,
+                pricing_mode: payload.pricing_mode,
+                tarifa,
+                cantidad,
+                valor_calculado,
+                valor_manual: payload.valor_manual,
+                usar_valor_manual,
+                notas: payload.notas,
+                updated_at: new Date(),
+                updated_by: comercial_id
+            };
+
+            // Actualizar valor_a_facturar con el valor calculado/manual
+            solicitud.valor_a_facturar = valor_final;
+
+            // Auditoría
+            (solicitud as any).assigned_sales_by = comercial_id;
+            (solicitud as any).assigned_sales_at = new Date();
+            (solicitud as any).last_modified_by = comercial_id;
+
+            // Recalcular utilidad
+            const total_gastos = (solicitud.total_gastos_operacionales || 0);
+            const valor_cancelado = solicitud.valor_cancelado || 0;
+            const utilidad = valor_final - valor_cancelado - total_gastos;
+            const porcentaje_utilidad = valor_final > 0 ? (utilidad / valor_final) * 100 : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+
+            // Actualizar estado contable si aplica
+            if (solicitud.valor_cancelado > 0 && solicitud.valor_a_facturar > 0) {
+                const currentStatus = (solicitud as any).accounting_status;
+                if (!currentStatus || currentStatus === "no_iniciado") {
+                    (solicitud as any).accounting_status = "pendiente_operacional";
+                }
+            }
+
+            await solicitud.save();
+
+            // Recalcular liquidación
+            await this.calcular_liquidacion({ solicitud_id });
+
+            return {
+                message: "Contrato de venta establecido exitosamente",
+                solicitud: solicitud.toObject(),
+                calculo: {
+                    pricing_mode: payload.pricing_mode,
+                    tarifa,
+                    cantidad,
+                    valor_calculado,
+                    valor_manual: payload.valor_manual,
+                    usar_valor_manual,
+                    valor_final
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al establecer contrato de venta");
+        }
+    }
+
+    /**
+     * Recalcular el valor del contrato de venta (cuando cambian horas/km)
+     */
+    public async recalcular_contrato_venta({
+        solicitud_id,
+        user_id
+    }: {
+        solicitud_id: string;
+        user_id: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            const contrato_venta = (solicitud as any).contrato_venta;
+            if (!contrato_venta?.contract_id) {
+                throw new ResponseError(400, "La solicitud no tiene contrato de venta configurado");
+            }
+
+            // Si usa valor manual, no recalcular
+            if (contrato_venta.usar_valor_manual) {
+                return {
+                    message: "El contrato usa valor manual, no se recalcula",
+                    solicitud: solicitud.toObject()
+                };
+            }
+
+            // Obtener el contrato
+            const contract = await contractModel.findById(contrato_venta.contract_id).lean();
+            if (!contract) throw new ResponseError(404, "Contrato no encontrado");
+
+            // Recalcular total_horas
+            solicitud.total_horas = this.calcular_total_horas(solicitud);
+
+            // Determinar nueva cantidad
+            let cantidad: number;
+            switch (contrato_venta.pricing_mode) {
+                case "por_hora":
+                    cantidad = solicitud.total_horas || 0;
+                    break;
+                case "por_kilometro":
+                    cantidad = (solicitud as any).kilometros_reales || 0;
+                    break;
+                default:
+                    cantidad = 1;
+            }
+
+            // Recalcular valor
+            const valor_calculado = this.calcular_valor_contrato({
+                pricing_mode: contrato_venta.pricing_mode,
+                tarifa: contrato_venta.tarifa,
+                cantidad
+            });
+
+            // Actualizar
+            contrato_venta.cantidad = cantidad;
+            contrato_venta.valor_calculado = valor_calculado;
+            contrato_venta.updated_at = new Date();
+            contrato_venta.updated_by = user_id;
+            (solicitud as any).contrato_venta = contrato_venta;
+
+            solicitud.valor_a_facturar = valor_calculado;
+
+            // Recalcular utilidad
+            const total_gastos = (solicitud.total_gastos_operacionales || 0);
+            const valor_cancelado = solicitud.valor_cancelado || 0;
+            const utilidad = valor_calculado - valor_cancelado - total_gastos;
+            const porcentaje_utilidad = valor_calculado > 0 ? (utilidad / valor_calculado) * 100 : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            return {
+                message: "Contrato de venta recalculado",
+                solicitud: solicitud.toObject(),
+                calculo: {
+                    pricing_mode: contrato_venta.pricing_mode,
+                    tarifa: contrato_venta.tarifa,
+                    cantidad,
+                    valor_calculado
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al recalcular contrato de venta");
+        }
+    }
+
+    /**
+     * Establecer/Actualizar contrato de COMPRA por vehículo (coordinador operador)
+     * Define tipo_contrato, pricing_mode y tarifa directamente (sin contrato de BD)
+     * Si hay cantidad, calcula valor_calculado = tarifa × cantidad
+     */
+    public async set_contrato_compra_vehiculo({
+        solicitud_id,
+        vehiculo_id,
+        operador_id,
+        payload
+    }: {
+        solicitud_id: string;
+        vehiculo_id: string;
+        operador_id: string;
+        payload: {
+            tipo_contrato: "fijo" | "ocasional";
+            pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+            tarifa: number;
+            cantidad?: number;  // Si no se proporciona, usa total_horas o kilometros_reales de la solicitud
+        };
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            // Buscar el vehículo en los assignments
+            const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+            const assignmentIndex = vehicle_assignments.findIndex(
+                (a: any) => String(a.vehiculo_id?._id || a.vehiculo_id) === vehiculo_id
+            );
+
+            if (assignmentIndex === -1) {
+                throw new ResponseError(404, "Vehículo no encontrado en la solicitud");
+            }
+
+            // Determinar la cantidad
+            let cantidad = payload.cantidad;
+            if (cantidad === undefined) {
+                switch (payload.pricing_mode) {
+                    case "por_hora":
+                        cantidad = solicitud.total_horas || 0;
+                        break;
+                    case "por_kilometro":
+                        cantidad = (solicitud as any).kilometros_reales || 0;
+                        break;
+                    case "por_distancia":
+                    case "por_viaje":
+                    case "por_trayecto":
+                        cantidad = 1;
+                        break;
+                }
+            }
+
+            // Calcular el valor
+            let valor_calculado = 0;
+            if (payload.pricing_mode === "por_hora" || payload.pricing_mode === "por_kilometro") {
+                valor_calculado = payload.tarifa * (cantidad || 0);
+            } else {
+                valor_calculado = payload.tarifa; // Valor fijo
+            }
+
+            // Actualizar el contrato_compra del vehículo
+            vehicle_assignments[assignmentIndex].contrato_compra = {
+                tipo_contrato: payload.tipo_contrato,
+                pricing_mode: payload.pricing_mode,
+                tarifa: payload.tarifa,
+                cantidad,
+                valor_calculado
+            };
+
+            (solicitud as any).vehicle_assignments = vehicle_assignments;
+
+            // Recalcular el valor_cancelado total (suma de todos los vehículos)
+            let total_valor_cancelado = 0;
+            for (const assignment of vehicle_assignments) {
+                if (assignment.contrato_compra?.valor_calculado) {
+                    total_valor_cancelado += assignment.contrato_compra.valor_calculado;
+                }
+            }
+
+            solicitud.valor_cancelado = total_valor_cancelado;
+
+            // Auditoría
+            (solicitud as any).assigned_costs_by = operador_id;
+            (solicitud as any).assigned_costs_at = new Date();
+            (solicitud as any).last_modified_by = operador_id;
+
+            // Recalcular utilidad
+            const total_gastos = (solicitud.total_gastos_operacionales || 0);
+            const valor_a_facturar = solicitud.valor_a_facturar || 0;
+            const utilidad = valor_a_facturar - total_valor_cancelado - total_gastos;
+            const porcentaje_utilidad = valor_a_facturar > 0 ? (utilidad / valor_a_facturar) * 100 : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+
+            await solicitud.save();
+
+            // Sincronizar PaymentSection para que tenga el valor_base actualizado
+            try {
+                const paymentSectionService = new PaymentSectionService();
+                const vehicleAssignmentsForPS = vehicle_assignments.map((a: any) => ({
+                    vehiculo_id: String(a.vehiculo_id?._id || a.vehiculo_id),
+                    placa: a.placa,
+                    conductor_id: String(a.conductor_id?._id || a.conductor_id),
+                    flota: a.flota || 'externo',
+                    contrato_compra: a.contrato_compra
+                }));
+                await paymentSectionService.create_or_update_payment_section({
+                    solicitud_id,
+                    company_id: (solicitud as any).bitacora_id?.company_id?.toString() || '',
+                    vehicle_assignments: vehicleAssignmentsForPS,
+                    created_by: operador_id
+                });
+            } catch (psError) {
+                // Si falla la sincronización del PaymentSection, no afectar la operación principal
+                console.error('Error sincronizando PaymentSection:', psError);
+            }
+
+            return {
+                message: "Contrato de compra del vehículo establecido",
+                vehiculo: {
+                    vehiculo_id,
+                    placa: vehicle_assignments[assignmentIndex].placa,
+                    contrato_compra: vehicle_assignments[assignmentIndex].contrato_compra
+                },
+                totales: {
+                    valor_cancelado: total_valor_cancelado,
+                    valor_a_facturar,
+                    utilidad,
+                    porcentaje_utilidad
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al establecer contrato de compra del vehículo");
+        }
+    }
+
+    /**
+     * Recalcular contratos de compra de todos los vehículos (cuando cambian horas/km)
+     */
+    public async recalcular_contratos_compra({
+        solicitud_id,
+        user_id
+    }: {
+        solicitud_id: string;
+        user_id: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id);
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+            let total_valor_cancelado = 0;
+
+            for (let i = 0; i < vehicle_assignments.length; i++) {
+                const assignment = vehicle_assignments[i];
+                const contrato_compra = assignment.contrato_compra;
+
+                if (!contrato_compra?.contract_id) continue;
+
+                // Si usa valor manual, no recalcular
+                if (contrato_compra.usar_valor_manual) {
+                    total_valor_cancelado += contrato_compra.valor_manual || 0;
+                    continue;
+                }
+
+                // Determinar nueva cantidad
+                let cantidad: number;
+                switch (contrato_compra.pricing_mode) {
+                    case "por_hora":
+                        cantidad = solicitud.total_horas || 0;
+                        break;
+                    case "por_kilometro":
+                        cantidad = (solicitud as any).kilometros_reales || 0;
+                        break;
+                    default:
+                        cantidad = 1;
+                }
+
+                // Recalcular valor
+                const valor_calculado = this.calcular_valor_contrato({
+                    pricing_mode: contrato_compra.pricing_mode,
+                    tarifa: contrato_compra.tarifa,
+                    cantidad
+                });
+
+                // Actualizar
+                contrato_compra.cantidad = cantidad;
+                contrato_compra.valor_calculado = valor_calculado;
+                contrato_compra.updated_at = new Date();
+                contrato_compra.updated_by = user_id;
+
+                vehicle_assignments[i].contrato_compra = contrato_compra;
+                total_valor_cancelado += valor_calculado;
+            }
+
+            (solicitud as any).vehicle_assignments = vehicle_assignments;
+            solicitud.valor_cancelado = total_valor_cancelado;
+
+            // Recalcular utilidad
+            const total_gastos = (solicitud.total_gastos_operacionales || 0);
+            const valor_a_facturar = solicitud.valor_a_facturar || 0;
+            const utilidad = valor_a_facturar - total_valor_cancelado - total_gastos;
+            const porcentaje_utilidad = valor_a_facturar > 0 ? (utilidad / valor_a_facturar) * 100 : 0;
+
+            solicitud.utilidad = utilidad;
+            solicitud.porcentaje_utilidad = porcentaje_utilidad;
+            (solicitud as any).last_modified_by = user_id;
+
+            await solicitud.save();
+
+            return {
+                message: "Contratos de compra recalculados",
+                solicitud: solicitud.toObject(),
+                totales: {
+                    valor_cancelado_total: total_valor_cancelado,
+                    valor_a_facturar,
+                    utilidad,
+                    porcentaje_utilidad
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al recalcular contratos de compra");
+        }
+    }
+
+    /**
+     * Obtener resumen de contratos de una solicitud
+     */
+    public async get_contratos_resumen({
+        solicitud_id
+    }: {
+        solicitud_id: string;
+    }) {
+        try {
+            const solicitud = await solicitudModel.findById(solicitud_id)
+                .populate('contrato_venta.contract_id')
+                .lean();
+            if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
+
+            const contrato_venta = (solicitud as any).contrato_venta;
+            const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+
+            // Obtener contratos de compra con datos del contrato
+            const contratos_compra = [];
+            for (const assignment of vehicle_assignments) {
+                if (assignment.contrato_compra?.contract_id) {
+                    const contract = await contractModel.findById(assignment.contrato_compra.contract_id).lean();
+                    contratos_compra.push({
+                        vehiculo_id: assignment.vehiculo_id,
+                        placa: assignment.placa,
+                        contrato_compra: assignment.contrato_compra,
+                        contrato_info: contract
+                    });
+                }
+            }
+
+            return {
+                solicitud_id,
+                datos_servicio: {
+                    total_horas: solicitud.total_horas,
+                    kilometros_reales: (solicitud as any).kilometros_reales,
+                    hora_inicio: solicitud.hora_inicio,
+                    hora_final: solicitud.hora_final,
+                    fecha: solicitud.fecha,
+                    fecha_final: solicitud.fecha_final
+                },
+                contrato_venta: contrato_venta ? {
+                    ...contrato_venta,
+                    valor_final: contrato_venta.usar_valor_manual 
+                        ? contrato_venta.valor_manual 
+                        : contrato_venta.valor_calculado
+                } : null,
+                contratos_compra,
+                totales: {
+                    valor_a_facturar: solicitud.valor_a_facturar,
+                    valor_cancelado: solicitud.valor_cancelado,
+                    utilidad: solicitud.utilidad,
+                    porcentaje_utilidad: solicitud.porcentaje_utilidad
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al obtener resumen de contratos");
         }
     }
 }

@@ -682,3 +682,62 @@ export const send_client_prefactura = async ({
         console.log("Error al enviar email de prefactura al cliente:", error);
     }
 };
+
+// 14. Cliente - Preliquidación con PDF
+export const send_client_preliquidacion = async ({
+    client_name,
+    client_email,
+    company_name,
+    preliquidacion_numero,
+    preliquidacion_pdf,
+    notas,
+    dashboard_link
+}: {
+    client_name: string;
+    client_email: string;
+    company_name: string;
+    preliquidacion_numero: string;
+    preliquidacion_pdf: { filename: string; buffer: Buffer };
+    notas?: string;
+    dashboard_link?: string;
+}) => {
+    try {
+        const templatePath = path.join(__dirname, "templates", "cliente-preliquidacion.html");
+        const html_template = fs.readFileSync(templatePath, "utf8");
+
+        const notasSection = notas 
+            ? `<p><strong>Notas:</strong> ${notas}</p>`
+            : '';
+
+        // Si no se proporciona dashboard_link, usar un link genérico
+        const dashboardUrl = dashboard_link || `${process.env.FRONTEND_URL || 'https://dashboard.example.com'}/preliquidaciones/${preliquidacion_numero}`;
+
+        const html_final = replaceVariables(html_template, {
+            client_name,
+            company_name,
+            preliquidacion_numero,
+            notas_section: notasSection,
+            dashboard_link: dashboardUrl,
+            year: YEAR.toString()
+        });
+
+        // Preparar adjunto PDF
+        const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [
+            {
+                filename: preliquidacion_pdf.filename,
+                content: preliquidacion_pdf.buffer,
+                contentType: "application/pdf"
+            }
+        ];
+
+        await sendEmail(
+            client_email, 
+            `Preliquidación N° ${preliquidacion_numero} - Admin Transporte`, 
+            html_final, 
+            attachments
+        );
+    } catch (error) {
+        if (error instanceof ResponseError) throw error;
+        console.log("Error al enviar email de preliquidación al cliente:", error);
+    }
+};

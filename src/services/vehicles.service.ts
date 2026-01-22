@@ -316,12 +316,10 @@ export class VehicleServices {
     public async create_operational_bills({
         vehicle_id,
         user_id,
-        solicitud_id,
         bills
     }: {
         vehicle_id: string,
         user_id: string,
-        solicitud_id?: string, // Opcional: vincular gastos a una solicitud específica
         bills: Array<{
             type_bill: "fuel" | "tolls" | "repairs" | "fines" | "parking_lot",
             value: number,
@@ -375,47 +373,16 @@ export class VehicleServices {
                 })
             );
 
-            // Validar solicitud_id si se proporciona
-            if (solicitud_id) {
-                const solicitudModel = (await import("@/models/solicitud.model")).default;
-                const solicitud = await solicitudModel.findById(solicitud_id);
-                if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
-            }
-
             // Crear el documento de gastos operacionales
             const operational = await vhc_operationalModel.create({
                 vehicle_id,
-                solicitud_id: solicitud_id || undefined,
                 uploaded_by: user_id,
                 bills: processedBills,
+                estado: "no_liquidado",
                 created: new Date()
             });
 
             await operational.save();
-
-            // Si hay solicitud_id, recalcular liquidación automáticamente y actualizar estado de contabilidad
-            if (solicitud_id) {
-                try {
-                    const { SolicitudesService } = await import("@/services/solicitudes.service");
-                    const solicitudesService = new SolicitudesService();
-                    await solicitudesService.calcular_liquidacion({ solicitud_id });
-                    // Actualizar estado de contabilidad si todos los operacionales están completos
-                    await solicitudesService.update_accounting_status_on_operational_upload({ solicitud_id });
-                    
-                    // Guardar auditoría de subida de operacionales
-                    const solicitudModel = (await import("@/models/solicitud.model")).default;
-                    const solicitud = await solicitudModel.findById(solicitud_id);
-                    if (solicitud && user_id) {
-                        (solicitud as any).uploaded_operationals_by = user_id;
-                        (solicitud as any).uploaded_operationals_at = new Date();
-                        (solicitud as any).last_modified_by = user_id;
-                        await solicitud.save();
-                    }
-                } catch (calcError) {
-                    console.log("Error al recalcular liquidación:", calcError);
-                    // No lanzar error, solo loguear (el gasto ya se guardó)
-                }
-            }
 
             // Notificar a la empresa/contabilidad sobre los nuevos gastos registrados
             try {

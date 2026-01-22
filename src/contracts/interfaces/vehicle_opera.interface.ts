@@ -14,8 +14,8 @@ export type VehicleBills = {
 
 export interface VehicleOperational extends Document {
     vehicle_id: ObjectId;
-    solicitud_id?: ObjectId; // Vincular gastos a solicitud específica
     bills: VehicleBills[];
+    estado: "no_liquidado" | "liquidado"; // Estado de liquidación
     created: Date;
     uploaded_by: ObjectId
 }

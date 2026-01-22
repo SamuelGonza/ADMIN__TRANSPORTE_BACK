@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { SolicitudesService } from "@/services/solicitudes.service";
 import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
+import * as fs from "fs";
+import * as path from "path";
 
 export class SolicitudesController {
     private solicitudesService = new SolicitudesService();
@@ -533,12 +535,13 @@ export class SolicitudesController {
     }
 
     /**
-     * Establecer valores financieros (solo comercial)
+     * Establecer valores financieros y contrato (solo comercial)
+     * El coordinador comercial selecciona el contrato y establece el valor a facturar
      */
     public async set_financial_values(req: Request, res: Response) {
         try {
             const { id } = req.params;
-            const { valor_a_facturar } = req.body;
+            const { valor_a_facturar, contract_id, contract_charge_mode, contract_charge_amount } = req.body;
             const comercial_id = (req as AuthRequest).user?._id;
 
             if (!valor_a_facturar) {
@@ -553,12 +556,15 @@ export class SolicitudesController {
                 solicitud_id: id,
                 comercial_id: comercial_id as string,
                 payload: {
-                    valor_a_facturar: Number(valor_a_facturar)
+                    valor_a_facturar: Number(valor_a_facturar),
+                    contract_id: contract_id || undefined,
+                    contract_charge_mode: contract_charge_mode || undefined,
+                    contract_charge_amount: contract_charge_amount ? Number(contract_charge_amount) : undefined,
                 }
             });
 
             res.status(200).json({
-                message: "Valores de venta establecidos correctamente",
+                message: "Valores de venta y contrato establecidos correctamente",
                 data: response
             });
         } catch (error) {
@@ -1186,27 +1192,55 @@ export class SolicitudesController {
      */
     public async download_operational_bills_template(req: Request, res: Response) {
         try {
-            const { generateOperationalBillsTemplate } = await import('@/utils/generate-excel-template');
-            const excelBuffer = generateOperationalBillsTemplate();
+            const fileName = "plantilla-gastos-operacionales.xlsx";
+            const cwd = process.cwd();
+            const rootPath = path.join(cwd, "templates", fileName);
+            const distPath = path.join(cwd, "dist", "templates", fileName);
+            
+            // Buscar el archivo primero en la raíz, luego en dist
+            let filePath: string;
+            if (fs.existsSync(rootPath)) {
+                filePath = rootPath;
+            } else if (fs.existsSync(distPath)) {
+                filePath = distPath;
+            } else {
+                res.status(404).json({
+                    ok: false,
+                    message: `Plantilla ${fileName} no encontrada`
+                });
+                return;
+            }
 
+            // Leer el archivo
+            const fileBuffer = fs.readFileSync(filePath);
+            
+            // Configurar headers para descarga
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', 'attachment; filename="plantilla-gastos-operacionales.xlsx"');
-            res.send(excelBuffer);
+            res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+            res.setHeader('Content-Length', fileBuffer.length.toString());
+            res.send(fileBuffer);
         } catch (error) {
-            console.error("Error al generar plantilla:", error);
+            console.error("Error al descargar plantilla:", error);
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
             res.status(500).json({
                 ok: false,
-                message: "Error al generar plantilla Excel"
+                message: "Error al descargar la plantilla Excel"
             });
         }
     }
 
     /**
      * Subir y procesar archivo Excel con gastos operacionales
+     * Los gastos se crean sin vincular a ninguna solicitud y se marcan como "no_liquidado"
      */
     public async upload_operational_bills_excel(req: Request, res: Response) {
         try {
-            const { id: solicitud_id } = req.params;
             const excelFile = req.file;
 
             if (!excelFile) {
@@ -1240,7 +1274,6 @@ export class SolicitudesController {
             }
 
             const resultado = await this.solicitudesService.process_operational_bills_excel({
-                solicitud_id,
                 excelFile,
                 user_id
             });
@@ -1397,6 +1430,324 @@ export class SolicitudesController {
             res.status(500).json({
                 ok: false,
                 message: "Error al rechazar prefactura"
+            });
+        }
+    }
+
+    // ==========================================
+    // CONTRATOS DE VENTA Y COMPRA
+    // ==========================================
+
+    /**
+     * Actualizar datos del servicio (hora_final, kilometros_reales)
+     * Puede ser usado por comercial u operador
+     */
+    public async update_datos_servicio(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { hora_final, kilometros_reales } = req.body;
+            const user_id = (req as AuthRequest).user?._id;
+
+            if (!user_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Usuario no autenticado"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.update_datos_servicio({
+                solicitud_id: id,
+                user_id: user_id as string,
+                payload: {
+                    hora_final,
+                    kilometros_reales: kilometros_reales !== undefined ? Number(kilometros_reales) : undefined
+                }
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al actualizar datos del servicio"
+            });
+        }
+    }
+
+    /**
+     * Establecer contrato de VENTA (solo coordinador comercial)
+     * Calcula automáticamente el valor_a_facturar basado en el contrato
+     */
+    public async set_contrato_venta(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const { 
+                contract_id, 
+                pricing_mode, 
+                cantidad, 
+                valor_manual, 
+                usar_valor_manual, 
+                notas,
+                hora_final,
+                kilometros_reales
+            } = req.body;
+            const comercial_id = (req as AuthRequest).user?._id;
+
+            if (!comercial_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Usuario no autenticado"
+                });
+                return;
+            }
+
+            if (!contract_id || !pricing_mode) {
+                res.status(400).json({
+                    ok: false,
+                    message: "contract_id y pricing_mode son requeridos"
+                });
+                return;
+            }
+
+            const validModes = ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"];
+            if (!validModes.includes(pricing_mode)) {
+                res.status(400).json({
+                    ok: false,
+                    message: `pricing_mode debe ser uno de: ${validModes.join(", ")}`
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.set_contrato_venta({
+                solicitud_id: id,
+                comercial_id: comercial_id as string,
+                payload: {
+                    contract_id,
+                    pricing_mode,
+                    cantidad: cantidad !== undefined ? Number(cantidad) : undefined,
+                    valor_manual: valor_manual !== undefined ? Number(valor_manual) : undefined,
+                    usar_valor_manual,
+                    notas,
+                    hora_final,
+                    kilometros_reales: kilometros_reales !== undefined ? Number(kilometros_reales) : undefined
+                }
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al establecer contrato de venta"
+            });
+        }
+    }
+
+    /**
+     * Recalcular contrato de venta (cuando cambian horas/km)
+     */
+    public async recalcular_contrato_venta(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const user_id = (req as AuthRequest).user?._id;
+
+            if (!user_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Usuario no autenticado"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.recalcular_contrato_venta({
+                solicitud_id: id,
+                user_id: user_id as string
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al recalcular contrato de venta"
+            });
+        }
+    }
+
+    /**
+     * Establecer contrato de COMPRA por vehículo (coordinador operador)
+     * Define tipo_contrato, pricing_mode y tarifa directamente
+     */
+    public async set_contrato_compra_vehiculo(req: Request, res: Response) {
+        try {
+            const { id, vehiculo_id } = req.params;
+            const { tipo_contrato, pricing_mode, tarifa, cantidad } = req.body;
+            const operador_id = (req as AuthRequest).user?._id;
+
+            if (!operador_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Usuario no autenticado"
+                });
+                return;
+            }
+
+            if (!tipo_contrato || !pricing_mode || tarifa === undefined) {
+                res.status(400).json({
+                    ok: false,
+                    message: "tipo_contrato, pricing_mode y tarifa son requeridos"
+                });
+                return;
+            }
+
+            const validModes = ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"];
+            if (!validModes.includes(pricing_mode)) {
+                res.status(400).json({
+                    ok: false,
+                    message: `pricing_mode debe ser uno de: ${validModes.join(", ")}`
+                });
+                return;
+            }
+
+            const validTipos = ["fijo", "ocasional"];
+            if (!validTipos.includes(tipo_contrato)) {
+                res.status(400).json({
+                    ok: false,
+                    message: `tipo_contrato debe ser uno de: ${validTipos.join(", ")}`
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.set_contrato_compra_vehiculo({
+                solicitud_id: id,
+                vehiculo_id,
+                operador_id: operador_id as string,
+                payload: {
+                    tipo_contrato,
+                    pricing_mode,
+                    tarifa: Number(tarifa),
+                    cantidad: cantidad !== undefined ? Number(cantidad) : undefined
+                }
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al establecer contrato de compra del vehículo"
+            });
+        }
+    }
+
+    /**
+     * Recalcular contratos de compra de todos los vehículos
+     */
+    public async recalcular_contratos_compra(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const user_id = (req as AuthRequest).user?._id;
+
+            if (!user_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Usuario no autenticado"
+                });
+                return;
+            }
+
+            const response = await this.solicitudesService.recalcular_contratos_compra({
+                solicitud_id: id,
+                user_id: user_id as string
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: response.message,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al recalcular contratos de compra"
+            });
+        }
+    }
+
+    /**
+     * Obtener resumen de contratos de una solicitud
+     */
+    public async get_contratos_resumen(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+
+            const response = await this.solicitudesService.get_contratos_resumen({
+                solicitud_id: id
+            });
+
+            res.status(200).json({
+                ok: true,
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener resumen de contratos"
             });
         }
     }

@@ -70,6 +70,9 @@ router.post("/client", ClienteAuth, solicitudesController.create_solicitud_clien
  *     description: |
  *       Crea una solicitud en estado `accepted` y asigna vehículo/conductor.
  *       El campo `he` se genera automáticamente como consecutivo por compañía.
+ *       
+ *       **IMPORTANTE**: La selección del contrato es responsabilidad del **coordinador comercial**.
+ *       Use PUT /solicitudes/:id/set-financial-values para seleccionar contrato y establecer valores de venta.
  *     security:
  *       - sessionCookie: []
  *     requestBody:
@@ -92,9 +95,6 @@ router.post("/client", ClienteAuth, solicitudesController.create_solicitud_clien
  *               requested_passengers: { type: number }
  *               estimated_km: { type: number }
  *               estimated_hours: { type: number }
- *               contract_id: { type: string }
- *               contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract] }
- *               contract_charge_amount: { type: number }
  *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
  *             required: [bitacora_id, cliente_id, empresa, fecha, hora_inicio, origen, destino, n_pasajeros, placa]
  *     responses:
@@ -475,7 +475,12 @@ router.post("/find-vehicles", CoordinadoresAuth, solicitudesController.find_vehi
  * /solicitudes/{id}/assign-vehicles:
  *   put:
  *     tags: [Solicitudes]
- *     summary: Confirmar asignación multi-vehículo (persistir)
+ *     summary: Confirmar asignación multi-vehículo (coordinador operador)
+ *     description: |
+ *       El coordinador operador asigna múltiples vehículos y conductores a la solicitud.
+ *       
+ *       **IMPORTANTE**: La selección del contrato es responsabilidad del **coordinador comercial**.
+ *       Use PUT /solicitudes/:id/set-financial-values para seleccionar contrato y establecer valores de venta.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -499,9 +504,6 @@ router.post("/find-vehicles", CoordinadoresAuth, solicitudesController.find_vehi
  *                     vehiculo_id: { type: string }
  *                     conductor_id: { type: string }
  *                     assigned_passengers: { type: number }
- *                     contract_id: { type: string }
- *                     contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract] }
- *                     contract_charge_amount: { type: number }
  *                   required: [vehiculo_id, conductor_id, assigned_passengers]
  *             required: [requested_passengers, assignments]
  *     responses:
@@ -561,10 +563,14 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  * /solicitudes/{id}/accept:
  *   put:
  *     tags: [Solicitudes]
- *     summary: Aceptar solicitud pendiente (coordinador)
+ *     summary: Aceptar solicitud pendiente (coordinador operador)
  *     description: |
  *       Acepta una solicitud `pending` y asigna vehículo por `placa` (y opcionalmente conductor).
- *       Nota: Los valores financieros NO se establecen aquí. El comercial debe usar PUT /solicitudes/:id/set-financial-values.
+ *       
+ *       **IMPORTANTE**: La selección del contrato es responsabilidad del **coordinador comercial**.
+ *       Use PUT /solicitudes/:id/set-financial-values para seleccionar contrato y establecer valores de venta.
+ *       
+ *       El coordinador operador solo asigna vehículos y conductores.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -585,9 +591,6 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  *               requested_passengers: { type: number }
  *               estimated_km: { type: number }
  *               estimated_hours: { type: number }
- *               contract_id: { type: string }
- *               contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract] }
- *               contract_charge_amount: { type: number }
  *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
  *             required: [empresa, placa]
  *     responses:
@@ -596,16 +599,18 @@ router.get("/:id/passenger-manifest-pdf", ReportsDownloadAuth, solicitudesContro
  */
 router.put("/:id/accept", CoordinadorAuth, solicitudesController.accept_solicitud.bind(solicitudesController));
 
-// Establecer valores de venta (solo coordinador comercial)
+// Establecer valores de venta y contrato (solo coordinador comercial)
 /**
  * @openapi
  * /solicitudes/{id}/set-financial-values:
  *   put:
  *     tags: [Solicitudes]
- *     summary: Establecer valores de venta (coordinador comercial)
+ *     summary: Establecer valores de venta y seleccionar contrato (coordinador comercial)
  *     description: |
- *       El coordinador comercial establece el valor a facturar al cliente (venta).
+ *       El coordinador comercial establece el valor a facturar al cliente (venta) y selecciona el contrato.
+ *       La selección del contrato es responsabilidad del coordinador comercial.
  *       La utilidad se calcula automáticamente si ya hay costos establecidos.
+ *       Si se selecciona contract_charge_mode = "within_contract", se carga automáticamente al contrato.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -621,10 +626,13 @@ router.put("/:id/accept", CoordinadorAuth, solicitudesController.accept_solicitu
  *             type: object
  *             properties:
  *               valor_a_facturar: { type: number, description: "Valor a facturar al cliente (venta)" }
+ *               contract_id: { type: string, description: "ID del contrato a utilizar (opcional)" }
+ *               contract_charge_mode: { type: string, enum: [within_contract, outside_contract, no_contract], description: "Modo de cargo al contrato" }
+ *               contract_charge_amount: { type: number, description: "Monto a cargar al contrato (por defecto usa valor_a_facturar)" }
  *             required: [valor_a_facturar]
  *     responses:
  *       200:
- *         description: Valores de venta establecidos correctamente
+ *         description: Valores de venta y contrato establecidos correctamente
  */
 router.put("/:id/set-financial-values", ComercialAuth, solicitudesController.set_financial_values.bind(solicitudesController));
 
@@ -1220,12 +1228,14 @@ router.get("/operational-bills-template", ContabilidadAuth, solicitudesControlle
 // Subir Excel con gastos operacionales
 /**
  * @openapi
- * /solicitudes/{id}/operational-bills-excel:
+ * /solicitudes/operational-bills-excel:
  *   post:
  *     tags: [Solicitudes]
  *     summary: Subir Excel con gastos operacionales (contabilidad)
  *     description: |
- *       Sube un archivo Excel con gastos operacionales de múltiples vehículos para una solicitud.
+ *       Sube un archivo Excel con gastos operacionales de múltiples vehículos.
+ *       Los gastos se crean sin vincular a ninguna solicitud y se marcan como "no_liquidado".
+ *       
  *       El Excel debe tener las siguientes columnas:
  *       - Tipo de Gasto: fuel, tolls, repairs, fines, parking_lot
  *       - Valor: número positivo
@@ -1235,18 +1245,9 @@ router.get("/operational-bills-template", ContabilidadAuth, solicitudesControlle
  *       El sistema procesará automáticamente:
  *       1. Leerá todas las filas del Excel
  *       2. Buscará los vehículos por placa
- *       3. Creará los registros de gastos operacionales para cada vehículo
- *       4. Los vinculará a la solicitud
- *       5. Recalculará automáticamente la liquidación
- *       6. Actualizará el estado de contabilidad
+ *       3. Creará los registros de gastos operacionales para cada vehículo con estado "no_liquidado"
  *     security:
  *       - sessionCookie: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema: { type: string }
- *         description: ID de la solicitud
  *     requestBody:
  *       required: true
  *       content:
@@ -1286,13 +1287,11 @@ router.get("/operational-bills-template", ContabilidadAuth, solicitudesControlle
  *                           error: { type: string }
  *       400:
  *         description: Error de validación (archivo inválido, formato incorrecto, etc.)
- *       404:
- *         description: Solicitud no encontrada
  *       500:
  *         description: Error al procesar Excel
  */
 router.post(
-    "/:id/operational-bills-excel",
+    "/operational-bills-excel",
     ContabilidadAuth,
     upload.single('excel'),
     solicitudesController.upload_operational_bills_excel.bind(solicitudesController)
@@ -1432,6 +1431,262 @@ router.put("/:id/client/approve-prefactura", ClienteAuth, solicitudesController.
  *         description: Solicitud no encontrada
  */
 router.put("/:id/client/reject-prefactura", ClienteAuth, solicitudesController.client_reject_prefactura.bind(solicitudesController));
+
+// #========== RUTAS DE CONTRATOS DE VENTA Y COMPRA ==========#
+
+// Actualizar datos del servicio (hora_final, kilometros_reales) - RECALCULA AUTOMÁTICAMENTE
+/**
+ * @openapi
+ * /solicitudes/{id}/datos-servicio:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Actualizar datos del servicio (RECALCULA TODO AUTOMÁTICAMENTE)
+ *     description: |
+ *       Permite actualizar la hora_final y los kilometros_reales del servicio.
+ *       
+ *       **IMPORTANTE**: Al actualizar estos valores, el sistema RECALCULA AUTOMÁTICAMENTE:
+ *       - El valor de todos los contratos de COMPRA (pago a vehículos) que usen por_hora o por_kilometro
+ *       - El valor del contrato de VENTA (cobro al cliente) si usa por_hora o por_kilometro
+ *       - La utilidad y porcentaje de utilidad
+ *       
+ *       No es necesario llamar a ningún endpoint de "recalcular".
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               hora_final: { type: string, example: "18:30", description: "Hora de finalización del servicio" }
+ *               kilometros_reales: { type: number, example: 415, description: "Kilómetros reales viajados" }
+ *     responses:
+ *       200:
+ *         description: Datos actualizados y todos los contratos recalculados automáticamente
+ */
+router.put("/:id/datos-servicio", CoordinadoresAuth, solicitudesController.update_datos_servicio.bind(solicitudesController));
+
+// Establecer contrato de venta (solo coordinador comercial)
+/**
+ * @openapi
+ * /solicitudes/{id}/contrato-venta:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Establecer contrato de VENTA (coordinador comercial)
+ *     description: |
+ *       El coordinador comercial establece el contrato de venta que define cuánto se le cobra al cliente.
+ *       
+ *       **Flujo:**
+ *       1. Seleccionar el contrato del cliente
+ *       2. Elegir el modo de cobro (por_hora, por_kilometro, por_distancia, por_viaje, por_trayecto)
+ *       3. El sistema calcula automáticamente el valor_a_facturar basado en:
+ *          - Por hora: tarifa_hora × total_horas
+ *          - Por kilómetro: tarifa_km × kilometros_reales
+ *          - Por distancia/viaje/trayecto: tarifa fija
+ *       
+ *       **Notas:**
+ *       - Se puede sobrescribir el cálculo con valor_manual si usar_valor_manual = true
+ *       - También se puede actualizar hora_final y kilometros_reales en la misma llamada
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [contract_id, pricing_mode]
+ *             properties:
+ *               contract_id: { type: string, description: "ID del contrato del cliente" }
+ *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, por_viaje, por_trayecto], description: "Modo de cobro" }
+ *               cantidad: { type: number, description: "Opcional: cantidad manual (si no se proporciona, se calcula automáticamente)" }
+ *               valor_manual: { type: number, description: "Opcional: valor manual para sobrescribir el cálculo" }
+ *               usar_valor_manual: { type: boolean, description: "Si true, usar valor_manual en vez del cálculo" }
+ *               notas: { type: string, description: "Notas opcionales" }
+ *               hora_final: { type: string, description: "Opcional: actualizar hora_final del servicio" }
+ *               kilometros_reales: { type: number, description: "Opcional: actualizar kilómetros reales" }
+ *     responses:
+ *       200:
+ *         description: Contrato de venta establecido exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 message: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     solicitud: { type: object }
+ *                     calculo:
+ *                       type: object
+ *                       properties:
+ *                         pricing_mode: { type: string }
+ *                         tarifa: { type: number }
+ *                         cantidad: { type: number }
+ *                         valor_calculado: { type: number }
+ *                         valor_manual: { type: number }
+ *                         usar_valor_manual: { type: boolean }
+ *                         valor_final: { type: number }
+ */
+router.put("/:id/contrato-venta", ComercialAuth, solicitudesController.set_contrato_venta.bind(solicitudesController));
+
+// Establecer contrato de compra por vehículo (solo coordinador operador)
+/**
+ * @openapi
+ * /solicitudes/{id}/vehiculo/{vehiculo_id}/contrato-compra:
+ *   put:
+ *     tags: [Solicitudes]
+ *     summary: Establecer contrato de COMPRA por vehículo (coordinador operador)
+ *     description: |
+ *       El coordinador operador establece el contrato de compra que define cuánto se le paga a cada vehículo.
+ *       
+ *       **Flujo:**
+ *       1. Seleccionar el contrato del vehículo/propietario
+ *       2. Elegir el modo de pago (por_hora, por_kilometro, por_distancia, por_viaje, por_trayecto)
+ *       3. El sistema calcula automáticamente el valor a pagar basado en:
+ *          - Por hora: tarifa_hora × total_horas (de la solicitud)
+ *          - Por kilómetro: tarifa_km × kilometros_reales (de la solicitud)
+ *          - Por distancia/viaje/trayecto: tarifa fija
+ *       
+ *       **Notas:**
+ *       - Se puede sobrescribir el cálculo con valor_manual si usar_valor_manual = true
+ *       - El valor_cancelado de la solicitud se actualiza automáticamente (suma de todos los vehículos)
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *       - in: path
+ *         name: vehiculo_id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID del vehículo en vehicle_assignments
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [contract_id, pricing_mode]
+ *             properties:
+ *               contract_id: { type: string, description: "ID del contrato del vehículo/propietario" }
+ *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, por_viaje, por_trayecto], description: "Modo de pago" }
+ *               cantidad: { type: number, description: "Opcional: cantidad manual (si no se proporciona, hereda de la solicitud)" }
+ *               valor_manual: { type: number, description: "Opcional: valor manual para sobrescribir el cálculo" }
+ *               usar_valor_manual: { type: boolean, description: "Si true, usar valor_manual en vez del cálculo" }
+ *               notas: { type: string, description: "Notas opcionales" }
+ *     responses:
+ *       200:
+ *         description: Contrato de compra del vehículo establecido exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 message: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     solicitud: { type: object }
+ *                     vehiculo:
+ *                       type: object
+ *                       properties:
+ *                         vehiculo_id: { type: string }
+ *                         placa: { type: string }
+ *                         contrato_compra: { type: object }
+ *                     calculo:
+ *                       type: object
+ *                       properties:
+ *                         pricing_mode: { type: string }
+ *                         tarifa: { type: number }
+ *                         cantidad: { type: number }
+ *                         valor_calculado: { type: number }
+ *                         valor_final: { type: number }
+ *                     totales:
+ *                       type: object
+ *                       properties:
+ *                         valor_cancelado_total: { type: number }
+ *                         valor_a_facturar: { type: number }
+ *                         utilidad: { type: number }
+ *                         porcentaje_utilidad: { type: number }
+ */
+router.put("/:id/vehiculo/:vehiculo_id/contrato-compra", CoordinadorAuth, solicitudesController.set_contrato_compra_vehiculo.bind(solicitudesController));
+
+// Obtener resumen de contratos de una solicitud
+/**
+ * @openapi
+ * /solicitudes/{id}/contratos-resumen:
+ *   get:
+ *     tags: [Solicitudes]
+ *     summary: Obtener resumen de contratos de una solicitud
+ *     description: |
+ *       Obtiene un resumen completo de los contratos de venta y compra de una solicitud.
+ *       Incluye datos del servicio, contrato de venta (lo que se cobra al cliente),
+ *       contratos de compra por vehículo (lo que se paga a cada vehículo), y totales.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Resumen de contratos
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     solicitud_id: { type: string }
+ *                     datos_servicio:
+ *                       type: object
+ *                       properties:
+ *                         total_horas: { type: number }
+ *                         kilometros_reales: { type: number }
+ *                         hora_inicio: { type: string }
+ *                         hora_final: { type: string }
+ *                         fecha: { type: string }
+ *                         fecha_final: { type: string }
+ *                     contrato_venta:
+ *                       type: object
+ *                       description: Contrato de venta (lo que se cobra al cliente)
+ *                     contratos_compra:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                       description: Contratos de compra por vehículo
+ *                     totales:
+ *                       type: object
+ *                       properties:
+ *                         valor_a_facturar: { type: number }
+ *                         valor_cancelado: { type: number }
+ *                         utilidad: { type: number }
+ *                         porcentaje_utilidad: { type: number }
+ */
+router.get("/:id/contratos-resumen", CoordinadoresAuth, solicitudesController.get_contratos_resumen.bind(solicitudesController));
 
 export default router;
 

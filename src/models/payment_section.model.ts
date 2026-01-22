@@ -2,6 +2,18 @@ import { PaymentSection } from "@/contracts/interfaces/payment_section.interface
 import { MongoIdRef } from "@/utils/constants";
 import mongoose, { Schema } from "mongoose";
 
+const PagoVehiculoSchema: Schema = new Schema(
+    {
+        tipo_contrato: { type: String, enum: ["fijo", "ocasional"], required: true },
+        pricing_mode: { type: String, enum: ["por_hora", "por_kilometro", "por_distancia", "por_viaje", "por_trayecto"], required: true },
+        tarifa: { type: Number, required: true },
+        cantidad: { type: Number, required: false },
+        valor_calculado: { type: Number, required: false },
+        usar_valor_manual: { type: Boolean, required: false, default: false }
+    },
+    { _id: false }
+);
+
 const CuentaCobroSchema: Schema = new Schema(
     {
         vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: true },
@@ -14,6 +26,9 @@ const CuentaCobroSchema: Schema = new Schema(
         },
         conductor_id: { type: MongoIdRef, ref: "User", required: false },
         flota: { type: String, enum: ["externo", "propio", "afiliado"], required: true },
+        
+        // Configuración del contrato de compra
+        pago_vehiculo: { type: PagoVehiculoSchema, required: false },
         
         // Valores financieros
         valor_base: { type: Number, required: true, default: 0 },
