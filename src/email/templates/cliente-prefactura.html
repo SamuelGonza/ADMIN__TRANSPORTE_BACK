@@ -5,27 +5,64 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Prefactura - Admin Transporte</title>
     <style>
-      body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f4f4;
+        }
       .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-      .header { background-color: #1e3a8a; color: white; padding: 20px; text-align: center; }
+        .header {
+            background-color: rgba(22, 63, 95, 0.95);
+            padding: 30px 20px;
+            text-align: center;
+            color: white;
+        }
       .content { padding: 20px; background-color: #f9f9f9; }
-      .footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }
-      .button { display: inline-block; padding: 10px 20px; background-color: #1e3a8a; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+             .footer {
+            background-color: rgba(22, 63, 95, 0.95);
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+            font-size: 14px;
+        }
+      .button { display: inline-block; padding: 10px 20px; background-color: rgba(22, 63, 95, 0.95); color: white; text-decoration: none; border-radius: 25px; margin-top: 20px; }
+            .logo-tecnotics {
+        filter: invert(1) grayscale(1);
+        width: 20%;
+      }
+              .footer-text {
+            margin-bottom: 10px;
+        }
+                  .logo-admin-transporte {
+        width: 60%;
+        border-bottom: 1px solid white;
+              margin: 5px;
+      }
     </style>
   </head>
   <body>
     <div class="container">
       <div class="header">
-        <h1>Prefactura de Servicio</h1>
+                            <div class="logo"><img class="logo-admin-transporte" 
+             src="https://res.cloudinary.com/appsftw/image/upload/v1769031962/zgfbgd6zwwv86z3px8uc.png" 
+             alt="TecnoTics · Soluciones corporativas">
+    </a></div>
+        <h2>Prefactura de Servicio</h2>
       </div>
       <div class="content">
         <p>Estimado/a <strong>{{client_name}}</strong>,</p>
-        <p>Adjuntamos la prefactura N° <strong>{{prefactura_numero}}</strong> correspondiente al servicio <strong>{{he}}</strong>.</p>
-        <p>Por favor, revise el documento adjunto con la información detallada del servicio y el valor a pagar.</p>
+        <p>Adjuntamos la prefactura N° <strong>{{prefactura_numero}}</strong> correspondiente {{servicio_texto}} <strong>{{he}}</strong>.</p>
+        <p>Por favor, revise el documento adjunto con la información detallada {{servicio_texto_detalle}} y el valor a pagar.</p>
         {{notas_section}}
         <p>Para aprobar o rechazar esta prefactura, por favor acceda a su dashboard haciendo clic en el siguiente enlace:</p>
         <p style="text-align: center; margin: 30px 0;">
-          <a href="{{dashboard_link}}" class="button" style="display: inline-block; padding: 12px 30px; background-color: #1e3a8a; color: white; text-decoration: none; border-radius: 5px;">
+          <a href="{{dashboard_link}}" class="button">
             Ver Prefactura en Dashboard
           </a>
         </p>
@@ -33,8 +70,21 @@
         <p>Saludos cordiales,<br><strong>{{company_name}}</strong></p>
       </div>
       <div class="footer">
-        <p>Este es un correo automático, por favor no responda a este mensaje.</p>
-        <p>&copy; {{year}} Admin Transporte. Todos los derechos reservados.</p>
+            <div class="footer-text">
+                © {{year}} AdminTransporte. Todos los derechos reservados.
+            </div>
+<div class="footer-text">
+    Desarrollado por
+</div>
+<div class="footer-text">
+    <a href="https://tecnotics.com" class="footer-link">
+        <img class="logo-tecnotics" 
+             src="https://res.cloudinary.com/appsftw/image/upload/v1756413778/nfhy5s2aniujveaurx8v.png" 
+             alt="TecnoTics · Soluciones corporativas">
+    </a>
+</div>
+
+        </div>
       </div>
     </div>
   </body>

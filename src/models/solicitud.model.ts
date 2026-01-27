@@ -159,7 +159,7 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
     accounting_status: { 
         type: String, 
         required: false, 
-        enum: ["no_iniciado", "pendiente_operacional", "operacional_completo", "prefactura_pendiente", "prefactura_aprobada", "listo_para_facturacion", "facturado", "listo_para_liquidar"],
+        enum: ["no_iniciado", "faltan_ventas", "faltan_costos", "pendiente_operacional", "operacional_completo", "prefactura_pendiente", "prefactura_aprobada", "esperando_aprobacion_cliente", "listo_para_facturacion", "facturado", "listo_para_liquidar"],
         default: "no_iniciado"
     },
     prefactura: {

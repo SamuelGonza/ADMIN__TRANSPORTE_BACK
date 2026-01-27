@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { FacturaController } from "@/controllers/factura.controller";
-import { GestionAuth } from "@/auth/gestion.auth";
+import { GestionClienteAuth } from "@/auth/gestion-cliente.auth";
 
 const router: Router = Router();
 const facturaController = new FacturaController();
@@ -10,7 +10,7 @@ const facturaController = new FacturaController();
  * /facturas/{id}:
  *   get:
  *     tags: [Facturacion]
- *     summary: Obtener factura por ID
+ *     summary: Obtener factura por ID (gestión y clientes)
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -29,6 +29,6 @@ const facturaController = new FacturaController();
  *                 message: { type: string }
  *                 data: { type: object }
  */
-router.get("/:id", GestionAuth, facturaController.get_factura_by_id.bind(facturaController));
+router.get("/:id", GestionClienteAuth, facturaController.get_factura_by_id.bind(facturaController));
 
 export default router;

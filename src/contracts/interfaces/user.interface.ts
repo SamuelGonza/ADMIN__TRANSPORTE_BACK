@@ -2,7 +2,7 @@ import { Document, ObjectId } from "mongoose";
 import { MediaTypes } from "../globals";
 
 export type UserDocuments = "cc" | "ce" | "psp" | "ti" | "nit";
-export type UserRoles = "superadmon" | "admin" | "coordinador_operador" | "coordinador_comercial" | "contabilidad" | "conductor" | "cliente"
+export type UserRoles = "superadmon" | "admin" | "coordinador_operador" | "coordinador_comercial" | "contabilidad" | "conductor" | "cliente" | "orquestador"
 
 export interface User extends Document {
     full_name: string;

@@ -6,20 +6,23 @@ import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
 /**
- * Acceso de Gestión (coordinadores + contabilidad + orquestador):
- * - superadmon, admin, coordinador_operador, coordinador_comercial, contabilidad, orquestador
- * Útil para endpoints compartidos (p.ej. crear solicitud desde staff, gestionar clientes/contratos).
+ * Middleware de autenticación para el rol "orquestador":
+ * - Gestionar contratos
+ * - Gestionar vehículos y sus documentos
+ * - Gestionar conductores y documentos de conductores
  */
-export const GestionAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const OrquestadorAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const token_session = req.cookies._session_token_;
-        if(!token_session) throw new ResponseError(401, "No se proporcionó autorización");
+        if (!token_session) throw new ResponseError(401, "No se proporcionó autorización");
 
         const decoded = jwt.verify(token_session, GLOBAL_ENV.JWT_SECRET) as TokenSessionPayload;
-        if(!decoded) throw new ResponseError(401, "Token inválido");
+        if (!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad", "orquestador"];
-        if(!allowedRoles.includes(decoded.role)) throw new ResponseError(401, "No tienes permisos");
+        const allowedRoles = ["orquestador"];
+        if (!allowedRoles.includes(decoded.role)) {
+            throw new ResponseError(401, "No tienes permisos para realizar esta operación");
+        }
 
         (req as AuthRequest).user = {
             _id: decoded._id,
@@ -37,5 +40,3 @@ export const GestionAuth = async (req: Request, res: Response, next: NextFunctio
         return;
     }
 };
-
-

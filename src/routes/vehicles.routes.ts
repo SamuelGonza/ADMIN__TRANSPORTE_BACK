@@ -854,5 +854,52 @@ router.put("/:id/driver", VehicleWriteAuth, vehiclesController.update_vehicle_dr
  */
 router.get("/search/placa", SessionAuth, vehiclesController.search_vehicles_by_placa.bind(vehiclesController));
 
+// Exportar vehículos a Excel
+/**
+ * @openapi
+ * /vehicles/export/excel:
+ *   get:
+ *     tags: [Vehicles]
+ *     summary: Exportar vehículos a Excel
+ *     description: |
+ *       Exporta vehículos a Excel. Puede exportar todos los vehículos, filtrar por tipo/flota,
+ *       o exportar vehículos específicos proporcionando sus IDs.
+ *       Incluye información completa del vehículo, conductor, propietario y ficha técnica.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: query
+ *         name: vehicle_ids
+ *         schema: { type: string }
+ *         description: Opcional: IDs de vehículos separados por coma para exportar solo esos vehículos
+ *       - in: query
+ *         name: type
+ *         schema: { type: string, enum: [bus, buseta, buseton, camioneta, campero, micro, van] }
+ *         description: Opcional: Filtrar por tipo de vehículo
+ *       - in: query
+ *         name: flota
+ *         schema: { type: string, enum: [externo, propio, afiliado] }
+ *         description: Opcional: Filtrar por flota
+ *       - in: query
+ *         name: placa
+ *         schema: { type: string }
+ *         description: Opcional: Filtrar por placa (búsqueda parcial)
+ *       - in: query
+ *         name: name
+ *         schema: { type: string }
+ *         description: Opcional: Filtrar por nombre (búsqueda parcial)
+ *     responses:
+ *       200:
+ *         description: Archivo Excel descargado
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       500:
+ *         description: Error al exportar
+ */
+router.get("/export/excel", SessionAuth, vehiclesController.export_vehicles_to_excel.bind(vehiclesController));
+
 export default router;
 

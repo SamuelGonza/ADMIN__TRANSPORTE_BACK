@@ -167,5 +167,71 @@ router.get("/solicitud/:solicitud_id", GestionAuth, paymentSectionController.get
  */
 router.put("/:paymentSectionId/cuenta-cobro/:vehiculoId", GestionAuth, paymentSectionController.update_cuenta_cobro.bind(paymentSectionController));
 
+// Listar todas las cuentas de cobro con paginación
+/**
+ * @openapi
+ * /payment-sections/cuentas-cobro:
+ *   get:
+ *     tags: [PaymentSections]
+ *     summary: Listar todas las cuentas de cobro con paginación
+ *     description: |
+ *       Lista todas las cuentas de cobro de todos los PaymentSections con paginación.
+ *       Permite filtrar por estado y flota.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *         description: Número de página
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 10 }
+ *         description: Cantidad de resultados por página
+ *       - in: query
+ *         name: estado
+ *         schema: { type: string, enum: [pendiente, calculada, pagada, cancelada] }
+ *         description: Filtrar por estado de la cuenta de cobro
+ *       - in: query
+ *         name: flota
+ *         schema: { type: string, enum: [propio, afiliado, externo] }
+ *         description: Filtrar por tipo de flota
+ *     responses:
+ *       200:
+ *         description: Cuentas de cobro obtenidas correctamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok: { type: boolean }
+ *                 message: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     cuentas_cobro:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           vehiculo_id: { type: object }
+ *                           placa: { type: string }
+ *                           propietario: { type: object }
+ *                           valor_base: { type: number }
+ *                           gastos_operacionales: { type: number }
+ *                           valor_final: { type: number }
+ *                           estado: { type: string }
+ *                           payment_section_id: { type: string }
+ *                           solicitud: { type: object }
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         page: { type: number }
+ *                         limit: { type: number }
+ *                         total: { type: number }
+ *                         totalPages: { type: number }
+ */
+router.get("/cuentas-cobro", GestionAuth, paymentSectionController.list_cuentas_cobro.bind(paymentSectionController));
+
 export default router;
 

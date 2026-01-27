@@ -99,13 +99,60 @@ export class ClientService {
 
     public async login({ email, password }: { email: string, password: string }) {
         try {
-            const find_client = await clientModel
+            // Primero intentar buscar como cliente normal
+            let find_client = await clientModel
                 .findOne({ email })
                 .select("name contacts phone email company_id password")
                 .populate('company_id', 'name document');
 
-            if (!find_client) throw new ResponseError(404, "Cuenta no encontrada");
+            // Si no se encuentra como cliente, buscar como client_user
+            if (!find_client) {
+                const { default: clientUserModel } = await import("@/models/client_user.model");
+                const find_client_user = await clientUserModel
+                    .findOne({ email })
+                    .select("full_name email company_id cliente_id password")
+                    .populate('company_id', 'name document')
+                    .populate('cliente_id', 'name email contacts phone');
 
+                if (!find_client_user) throw new ResponseError(404, "Cuenta no encontrada");
+
+                const ok_password = await compare_password(password, find_client_user.password);
+
+                if (!ok_password) throw new ResponseError(401, "Contraseña incorrecta");
+
+                // Extraer el ID de company_id (puede ser ObjectId o objeto populado)
+                const companyId = find_client_user.company_id 
+                    ? (typeof find_client_user.company_id === 'string' 
+                        ? find_client_user.company_id 
+                        : (find_client_user.company_id as any)?._id?.toString() || (find_client_user.company_id as any)?.toString())
+                    : undefined;
+
+                const token = generate_token_session({ 
+                    id: find_client_user._id.toString(), 
+                    role: "cliente" as any, 
+                    company_id: companyId 
+                });
+
+                return {
+                    token,
+                    client: {
+                        _id: find_client_user._id,
+                        name: (find_client_user.cliente_id as any)?.name || find_client_user.full_name,
+                        full_name: find_client_user.full_name,
+                        contacts: (find_client_user.cliente_id as any)?.contacts || [],
+                        phone: (find_client_user.cliente_id as any)?.phone || "",
+                        email: find_client_user.email,
+                        company_id: (find_client_user.company_id as any)?._id,
+                        company_name: (find_client_user.company_id as any)?.name,
+                        company_document: (find_client_user.company_id as any)?.document,
+                        cliente_id: (find_client_user.cliente_id as any)?._id,
+                        cliente_name: (find_client_user.cliente_id as any)?.name,
+                        is_client_user: true // Flag para identificar que es un subusuario
+                    }
+                };
+            }
+
+            // Si se encontró como cliente normal, continuar con el flujo original
             const ok_password = await compare_password(password, find_client.password);
 
             if (!ok_password) throw new ResponseError(401, "Contraseña incorrecta");
@@ -129,7 +176,8 @@ export class ClientService {
                     email: find_client.email,
                     company_id: (find_client.company_id as any)?._id,
                     company_name: (find_client.company_id as any)?.name,
-                    company_document: (find_client.company_id as any)?.document
+                    company_document: (find_client.company_id as any)?.document,
+                    is_client_user: false
                 }
             };
         } catch (error) {

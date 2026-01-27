@@ -10,6 +10,7 @@ import vhc_documentsModel from '@/models/vhc_documents.model';
 import vhc_preoperationalModel from '@/models/vhc_preoperational.model';
 import vhc_operationalModel from '@/models/vhc_operational.model';
 import { send_vehicle_created_assigned, send_preoperational_report, send_operational_bills } from '@/email/index.email';
+import EmailQueue, { EmailJobType } from '@/queues/email.queue';
 import companyModel from '@/models/company.model';
 import userModel from '@/models/user.model';
 import { delete_media } from '@/utils/cloudinary';
@@ -17,6 +18,7 @@ import fs from "fs";
 import path from "path";
 import dayjs from "dayjs";
 import { renderHtmlToPdfBuffer } from "@/utils/pdf";
+import * as XLSX from 'xlsx';
 export class VehicleServices {
 
     private static UserService = new UserService()
@@ -139,7 +141,8 @@ export class VehicleServices {
                     }).select('email').lean();
                     
                     if (companyContact) {
-                        await send_vehicle_created_assigned({
+                        const emailQueue = EmailQueue.getInstance();
+                        await emailQueue.addJob(EmailJobType.SEND_VEHICLE_CREATED_ASSIGNED, {
                             owner_name: company.company_name,
                             owner_email: companyContact.email,
                             placa,
@@ -151,7 +154,8 @@ export class VehicleServices {
                     }
                 } else if (owner_id.type === "User") {
                     const owner = await VehicleServices.UserService.get_user_by_id({ id: String(owner_id.user_id) });
-                    await send_vehicle_created_assigned({
+                    const emailQueue = EmailQueue.getInstance();
+                    await emailQueue.addJob(EmailJobType.SEND_VEHICLE_CREATED_ASSIGNED, {
                         owner_name: owner.full_name,
                         owner_email: owner.email,
                         placa,
@@ -1114,7 +1118,6 @@ export class VehicleServices {
                 conductor_nombre: driver.full_name || "",
                 conductor_documento: driver?.document?.number ? String(driver.document.number) : "",
                 conductor_telefono: driver?.contact?.phone || "",
-
                 documentos_images: "",
             });
 
@@ -1449,6 +1452,215 @@ export class VehicleServices {
         } catch (error) {
             if (error instanceof ResponseError) throw error;
             throw new ResponseError(500, "No se pudo validar la existencia del vehículo")
+        }
+    }
+
+    /**
+     * Exportar vehículos a Excel
+     * Puede exportar todos, filtrar por tipo/flota, o exportar vehículos seleccionados por IDs
+     */
+    public async export_vehicles_to_excel({
+        vehicle_ids,
+        filters = {}
+    }: {
+        vehicle_ids?: string[];
+        filters?: {
+            type?: VehicleTypes;
+            flota?: "externo" | "propio" | "afiliado";
+            placa?: string;
+            name?: string;
+        };
+    }): Promise<Buffer> {
+        try {
+            // Construir query
+            const query: any = {};
+
+            // Si se proporcionan IDs específicos, usar solo esos
+            if (vehicle_ids && vehicle_ids.length > 0) {
+                query._id = { $in: vehicle_ids };
+            }
+
+            // Aplicar filtros adicionales
+            if (filters.type) {
+                query.type = filters.type;
+            }
+
+            if (filters.flota) {
+                query.flota = filters.flota;
+            }
+
+            if (filters.placa) {
+                query.placa = { $regex: filters.placa, $options: 'i' };
+            }
+
+            if (filters.name) {
+                query.name = { $regex: filters.name, $options: 'i' };
+            }
+
+            // Obtener vehículos con todas las relaciones necesarias
+            const vehicles = await vehicleModel
+                .find(query)
+                .populate({
+                    path: 'driver_id',
+                    select: 'full_name document contact email',
+                    match: { is_delete: false, is_active: true }
+                })
+                .populate('owner_id.company_id', 'company_name document')
+                .populate('owner_id.user_id', 'full_name document contact')
+                .sort({ created: -1 })
+                .lean();
+
+            // Preparar datos para Excel
+            const excelData: any[] = [
+                [
+                    'Placa',
+                    'N° Interno',
+                    'Nombre',
+                    'Tipo',
+                    'Flota',
+                    'Capacidad (Pasajeros)',
+                    'Conductor',
+                    'Documento Conductor',
+                    'Teléfono Conductor',
+                    'Email Conductor',
+                    'Propietario Tipo',
+                    'Propietario Nombre',
+                    'Propietario Documento',
+                    'Marca',
+                    'Modelo',
+                    'Color',
+                    'Combustible',
+                    'Licencia Tránsito',
+                    'Línea',
+                    'Cilindrada (CC)',
+                    'Servicio',
+                    'Carrocería',
+                    'N° Chasis',
+                    'Fecha Matrícula',
+                    'Tarjeta Operación',
+                    'Venc. Tarjeta Operación',
+                    'Titular Licencia',
+                    'N° Motor',
+                    'N° Serie',
+                    'Declaración Importación',
+                    'Fecha Creación'
+                ]
+            ];
+
+            // Formatear fecha
+            const fmtDate = (d: any) => (d ? dayjs(d).format("DD/MM/YYYY") : "");
+
+            // Procesar cada vehículo
+            vehicles.forEach((vehicle: any) => {
+                const ts = vehicle.technical_sheet || {};
+                const driver = vehicle.driver_id || {};
+                const ownerCompany = vehicle.owner_id?.company_id || {};
+                const ownerUser = vehicle.owner_id?.user_id || {};
+
+                // Determinar tipo de propietario y nombre
+                let propietarioTipo = "";
+                let propietarioNombre = "";
+                let propietarioDocumento = "";
+
+                if (vehicle.owner_id?.type === "Company" && ownerCompany) {
+                    propietarioTipo = "Empresa";
+                    propietarioNombre = ownerCompany.company_name || "";
+                    propietarioDocumento = ownerCompany.document?.number 
+                        ? `${ownerCompany.document.number}${ownerCompany.document.dv ? "-" + ownerCompany.document.dv : ""}`
+                        : "";
+                } else if (vehicle.owner_id?.type === "User" && ownerUser) {
+                    propietarioTipo = "Usuario";
+                    propietarioNombre = ownerUser.full_name || "";
+                    propietarioDocumento = ownerUser.document?.number 
+                        ? `${ownerUser.document.type || ""} ${ownerUser.document.number}${ownerUser.document.dv ? "-" + ownerUser.document.dv : ""}`
+                        : "";
+                }
+
+                excelData.push([
+                    vehicle.placa || "",
+                    vehicle.n_numero_interno || "",
+                    vehicle.name || "",
+                    vehicle.type || "",
+                    vehicle.flota || "",
+                    vehicle.seats || 0,
+                    driver.full_name || "",
+                    driver.document?.number 
+                        ? `${driver.document.type || ""} ${driver.document.number}${driver.document.dv ? "-" + driver.document.dv : ""}`
+                        : "",
+                    driver.contact?.phone || "",
+                    driver.email || "",
+                    propietarioTipo,
+                    propietarioNombre,
+                    propietarioDocumento,
+                    ts.marca || "",
+                    ts.modelo != null ? String(ts.modelo) : "",
+                    ts.color || "",
+                    ts.tipo_combustible || "",
+                    ts.licencia_transito_numero || "",
+                    ts.linea || "",
+                    ts.cilindrada_cc != null ? String(ts.cilindrada_cc) : "",
+                    ts.servicio || "",
+                    ts.carroceria || "",
+                    ts.numero_chasis || "",
+                    fmtDate(ts.fecha_matricula),
+                    ts.tarjeta_operacion_numero || "",
+                    fmtDate(ts.tarjeta_operacion_vencimiento),
+                    ts.titular_licencia || "",
+                    ts.numero_motor || "",
+                    ts.numero_serie || "",
+                    ts.declaracion_importacion || "",
+                    fmtDate(vehicle.created)
+                ]);
+            });
+
+            // Crear workbook y worksheet
+            const workbook = XLSX.utils.book_new();
+            const worksheet = XLSX.utils.aoa_to_sheet(excelData);
+
+            // Ajustar ancho de columnas
+            worksheet['!cols'] = [
+                { wch: 12 }, // Placa
+                { wch: 12 }, // N° Interno
+                { wch: 20 }, // Nombre
+                { wch: 12 }, // Tipo
+                { wch: 12 }, // Flota
+                { wch: 15 }, // Capacidad
+                { wch: 25 }, // Conductor
+                { wch: 20 }, // Documento Conductor
+                { wch: 15 }, // Teléfono Conductor
+                { wch: 25 }, // Email Conductor
+                { wch: 15 }, // Propietario Tipo
+                { wch: 25 }, // Propietario Nombre
+                { wch: 20 }, // Propietario Documento
+                { wch: 15 }, // Marca
+                { wch: 12 }, // Modelo
+                { wch: 12 }, // Color
+                { wch: 15 }, // Combustible
+                { wch: 18 }, // Licencia Tránsito
+                { wch: 15 }, // Línea
+                { wch: 15 }, // Cilindrada
+                { wch: 15 }, // Servicio
+                { wch: 15 }, // Carrocería
+                { wch: 18 }, // N° Chasis
+                { wch: 15 }, // Fecha Matrícula
+                { wch: 18 }, // Tarjeta Operación
+                { wch: 18 }, // Venc. Tarjeta Operación
+                { wch: 25 }, // Titular Licencia
+                { wch: 15 }, // N° Motor
+                { wch: 15 }, // N° Serie
+                { wch: 20 }, // Declaración Importación
+                { wch: 15 }  // Fecha Creación
+            ];
+
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Vehículos');
+
+            // Generar buffer
+            const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+            return excelBuffer;
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, `Error al exportar vehículos a Excel: ${error instanceof Error ? error.message : 'Error desconocido'}`);
         }
     }
 }

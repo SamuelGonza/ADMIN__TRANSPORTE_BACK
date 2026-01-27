@@ -1,4 +1,4 @@
-import { Preliquidacion } from "@/contracts/interfaces/preliquidacion.interface";
+import { Preliquidacion, LiquidacionVehiculo } from "@/contracts/interfaces/preliquidacion.interface";
 import { MongoIdRef } from "@/utils/constants";
 import mongoose, { Schema } from "mongoose";
 
@@ -8,6 +8,38 @@ const HistorialEnvioSchema: Schema = new Schema(
         estado: { type: String, required: true, enum: ["aprobada", "rechazada"] },
         enviado_por: { type: MongoIdRef, ref: "User", required: true },
         notas: { type: String, required: false }
+    },
+    { _id: false }
+);
+
+const PropietarioSchema: Schema = new Schema(
+    {
+        type: { type: String, enum: ["Company", "User"], required: true },
+        company_id: { type: MongoIdRef, ref: "Companie", required: false },
+        user_id: { type: MongoIdRef, ref: "User", required: false },
+        nombre: { type: String, required: true }
+    },
+    { _id: false }
+);
+
+const LiquidacionVehiculoSchema: Schema = new Schema<LiquidacionVehiculo>(
+    {
+        vehiculo_id: { type: MongoIdRef, ref: "Vehicle", required: true },
+        placa: { type: String, required: true },
+        flota: { type: String, required: true, enum: ["propio", "afiliado", "externo"] },
+        propietario: { type: PropietarioSchema, required: true },
+        solicitudes_ids: { type: [MongoIdRef], ref: "Solicitud", required: true, default: [] },
+        gastos_operacionales_ids: { type: [MongoIdRef], ref: "VehicleOperational", required: true, default: [] },
+        total_servicios: { type: Number, required: true, default: 0 },
+        total_gastos_operacionales: { type: Number, required: true, default: 0 },
+        total_liquidacion: { type: Number, required: true, default: 0 },
+        estado: { 
+            type: String, 
+            required: true, 
+            enum: ["pendiente", "liquidado_sin_pagar", "pagado"], 
+            default: "pendiente" 
+        },
+        cuenta_cobro_id: { type: MongoIdRef, ref: "PaymentSection", required: false }
     },
     { _id: false }
 );
@@ -24,13 +56,16 @@ const PreliquidacionSchema: Schema = new Schema<Preliquidacion>({
     gastos_operacionales_ids: { type: [MongoIdRef], ref: "VehicleOperational", required: true, default: [] },
     gastos_preoperacionales_ids: { type: [MongoIdRef], ref: "VehiclePreoperational", required: true, default: [] },
     
-    // Valores monetarios
+    // Liquidaciones por vehículo
+    liquidaciones_vehiculos: { type: [LiquidacionVehiculoSchema], required: true, default: [] },
+    
+    // Valores monetarios (totales consolidados)
     total_solicitudes: { type: Number, required: true, default: 0 },
     total_gastos_operacionales: { type: Number, required: true, default: 0 },
     total_gastos_preoperacionales: { type: Number, required: true, default: 0 },
     total_preliquidacion: { type: Number, required: true, default: 0 },
     
-    // Aprobación/Rechazo
+    // Aprobación/Rechazo (rol ADMIN)
     estado: { 
         type: String, 
         required: true, 

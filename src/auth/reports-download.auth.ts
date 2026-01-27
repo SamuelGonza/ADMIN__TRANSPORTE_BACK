@@ -12,6 +12,7 @@ import jwt from 'jsonwebtoken'
  * - coordinador_comercial: puede descargar reportes
  * - admin: puede descargar reportes
  * - superadmon: puede descargar reportes
+ * - orquestador: puede descargar reportes (fichas técnicas de conductores)
  */
 export const ReportsDownloadAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -23,7 +24,7 @@ export const ReportsDownloadAuth = async (req: Request, res: Response, next: Nex
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad"];
+        const allowedRoles = ["superadmon", "admin", "coordinador_operador", "coordinador_comercial", "contabilidad", "orquestador"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para descargar este reporte");
         }

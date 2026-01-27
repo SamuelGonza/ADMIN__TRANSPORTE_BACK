@@ -18,7 +18,7 @@
       .section { margin-top: 10px; }
       table { width: 100%; border-collapse: collapse; }
       th, td { border: 1px solid #111; padding: 6px; vertical-align: top; }
-      th { background: #eef2ff; text-align: left; font-weight: 700; }
+      th { background: rgba(22, 63, 95, 0.95); text-align: left; font-weight: 700; color: white; }
       .footer { margin-top: 14px; border: 2px solid #1e3a8a; padding: 10px; }
       .small { font-size: 11px; color: #333; }
     </style>
@@ -76,6 +76,7 @@
           <tr><td><strong>N° Motor</strong></td><td>{{motor}}</td></tr>
           <tr><td><strong>N° Serie</strong></td><td>{{serie}}</td></tr>
           <tr><td><strong>Declaración importación</strong></td><td>{{importacion}}</td></tr>
+                    <tr><td style="padding: 70px"><strong>           <img class="logo" src="{{img_data}}" alt="Imagen" /></strong></td><td style="padding: 70px">          <img class="imagen" src="{{img_data}}" alt="Imagen" /></td></tr>
         </tbody>
       </table>
     </div>
@@ -91,7 +92,6 @@
           <tr><td><strong>Seguro</strong></td><td>{{seguro_venc}}</td></tr>
         </tbody>
       </table>
-      <div class="small" style="margin-top:6px;">* Los vencimientos se imprimen si están registrados en el sistema.</div>
     </div>
 
     <div class="footer">

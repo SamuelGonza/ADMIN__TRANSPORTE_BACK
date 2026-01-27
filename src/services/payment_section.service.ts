@@ -537,6 +537,84 @@ export class PaymentSectionService {
             throw new ResponseError(500, "No se pudo actualizar la cuenta de cobro");
         }
     }
+
+    /**
+     * Listar todas las cuentas de cobro con paginación
+     * Devuelve todas las cuentas de cobro de todos los PaymentSections
+     */
+    public async list_cuentas_cobro({
+        page = 1,
+        limit = 10,
+        estado,
+        flota,
+        company_id
+    }: {
+        page?: number;
+        limit?: number;
+        estado?: "pendiente" | "calculada" | "pagada" | "cancelada";
+        flota?: "propio" | "afiliado" | "externo";
+        company_id?: string;
+    }) {
+        try {
+            const skip = (page - 1) * limit;
+
+            // Construir query para PaymentSections
+            const query: any = {};
+            if (company_id) {
+                query.company_id = company_id;
+            }
+
+            // Obtener PaymentSections
+            const paymentSections = await paymentSectionModel.find(query)
+                .populate("solicitud_id", "he fecha cliente")
+                .populate("cuentas_cobro.vehiculo_id", "placa")
+                .populate("cuentas_cobro.conductor_id", "full_name")
+                .populate("cuentas_cobro.propietario.company_id", "company_name")
+                .populate("cuentas_cobro.propietario.user_id", "full_name")
+                .lean();
+
+            // Extraer todas las cuentas de cobro y aplicar filtros
+            let todasLasCuentas: any[] = [];
+            for (const ps of paymentSections) {
+                for (const cuenta of ps.cuentas_cobro || []) {
+                    // Aplicar filtros
+                    if (estado && cuenta.estado !== estado) continue;
+                    if (flota && cuenta.flota !== flota) continue;
+
+                    // Agregar información de la solicitud
+                    todasLasCuentas.push({
+                        ...cuenta,
+                        payment_section_id: ps._id,
+                        solicitud: ps.solicitud_id
+                    });
+                }
+            }
+
+            // Ordenar por fecha de creación (más recientes primero)
+            todasLasCuentas.sort((a, b) => {
+                const fechaA = new Date(a.created || 0).getTime();
+                const fechaB = new Date(b.created || 0).getTime();
+                return fechaB - fechaA;
+            });
+
+            // Aplicar paginación
+            const total = todasLasCuentas.length;
+            const cuentasPaginadas = todasLasCuentas.slice(skip, skip + limit);
+
+            return {
+                cuentas_cobro: cuentasPaginadas,
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    totalPages: Math.ceil(total / limit)
+                }
+            };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            throw new ResponseError(500, "Error al listar cuentas de cobro");
+        }
+    }
 }
 
 

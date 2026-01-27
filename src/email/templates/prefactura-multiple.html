@@ -3,11 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Preliquidación {{preliquidacion_numero}}</title>
+    <title>Prefactura {{prefactura_numero}}</title>
     <style>
       * { box-sizing: border-box; }
       body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; padding: 20px; }
-      .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; padding-top: 20px; background-color: rgba(22, 63, 95, 0.95) }
+      .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; padding-top: 20px; color: white; background-color: rgba(22, 63, 95, 0.95)}
       .header h1 { margin: 0; color: white; font-size: 24px; }
       .header h2 { margin: 5px 0; color: white; font-size: 18px; font-weight: normal; }
       .company-info { text-align: center; margin-bottom: 20px; }
@@ -15,18 +15,20 @@
       .info-section h3 { color: #333; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-bottom: 10px; }
       table { width: 100%; border-collapse: collapse; margin-top: 10px; }
       th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-      th { background-color: rgba(22, 63, 95, 0.95); font-weight: bold; color: white }
+      th { background-color: rgba(22, 63, 95, 0.95); font-weight: bold; color: white}
       .text-right { text-align: right; }
       .totals { margin-top: 20px; }
       .totals table { width: 50%; margin-left: auto; }
       .totals td { font-weight: bold; }
       .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 10px; color: #666; text-align: center; }
+      .service-section { margin-bottom: 30px; page-break-inside: avoid; }
+      .service-header { background-color: #f5f5f5; padding: 10px; margin-bottom: 10px; border-left: 4px solid rgba(22, 63, 95, 0.95); }
     </style>
   </head>
   <body>
     <div class="header">
-      <h1>PRELiquidación</h1>
-      <h2>N° {{preliquidacion_numero}}</h2>
+      <h1>PREFACTURA</h1>
+      <h2>N° {{prefactura_numero}}</h2>
     </div>
 
     <div class="company-info">
@@ -45,81 +47,44 @@
     </div>
 
     <div class="info-section">
-      <h3>Solicitudes Incluidas</h3>
+      <h3>Servicios Incluidos</h3>
       <table>
         <thead>
           <tr>
             <th>HE</th>
-            <th>Fecha</th>
+            <th>Fecha Inicio</th>
+            <th>Fecha Final</th>
             <th>Origen</th>
             <th>Destino</th>
-            <th class="text-right">Valor a Facturar</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{solicitudes_table}}
-        </tbody>
-      </table>
-    </div>
-
-    <div class="info-section">
-      <h3>Gastos Operacionales</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>ID Gasto</th>
+            <th>Pasajeros</th>
             <th class="text-right">Valor</th>
           </tr>
         </thead>
         <tbody>
-          {{gastos_op_table}}
+          {{servicios_table}}
         </tbody>
       </table>
     </div>
 
     <div class="info-section">
-      <h3>Gastos Preoperacionales</h3>
+      <h3>Detalle de Servicios</h3>
+      {{detalle_servicios}}
+    </div>
+
+    <div class="totals">
       <table>
-        <thead>
-          <tr>
-            <th>ID Gasto</th>
-            <th class="text-right">Valor</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{gastos_preop_table}}
-        </tbody>
+        <tr>
+          <td><strong>Total a Pagar:</strong></td>
+          <td class="text-right" style="font-size: 18px; font-weight: bold;">{{valor_total}}</td>
+        </tr>
       </table>
     </div>
 
-    <div class="info-section">
-      <h3>Resumen de Liquidación</h3>
-      <div class="totals">
-        <table>
-          <tr>
-            <td><strong>Total Solicitudes:</strong></td>
-            <td class="text-right">{{total_solicitudes}}</td>
-          </tr>
-          <tr>
-            <td><strong>Total Gastos Operacionales:</strong></td>
-            <td class="text-right">{{total_gastos_operacionales}}</td>
-          </tr>
-          <tr>
-            <td><strong>Total Gastos Preoperacionales:</strong></td>
-            <td class="text-right">{{total_gastos_preoperacionales}}</td>
-          </tr>
-          <tr style="border-top: 2px solid #333;">
-            <td><strong>Total Preliquidación:</strong></td>
-            <td class="text-right" style="font-size: 16px; font-weight: bold;">{{total_preliquidacion}}</td>
-          </tr>
-        </table>
-      </div>
-    </div>
+    {{novedades_section}}
 
     <div class="footer">
       <p>Fecha de Expedición: {{fecha_expedicion}}</p>
-      <p>Este documento es una preliquidación y no tiene validez fiscal</p>
-      <p>&copy; {{year}} Admin Transporte. Todos los derechos reservados.</p>
+      <p>Este documento es una prefactura y no tiene validez fiscal</p>
     </div>
   </body>
 </html>

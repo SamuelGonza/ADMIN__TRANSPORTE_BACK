@@ -10,6 +10,7 @@ import { ContabilidadAuth } from "@/auth/contabilidad.auth";
 import { ConductorAuth } from "@/auth/conductor.auth";
 import { ReportsDownloadAuth } from "@/auth/reports-download.auth";
 import { OperadorContabilidadAuth } from "@/auth/operador-contabilidad.auth";
+import { AdminAut } from "@/auth/admin.auth";
 import { upload } from "@/middlewares/multer.middleware";
 
 const router: Router = Router();
@@ -718,15 +719,19 @@ router.put("/:id/reject", CoordinadorAuth, solicitudesController.reject_solicitu
  *       200:
  *         description: Datos actualizados
  */
-// Calcular liquidación automática
+// Calcular liquidación final (SOLO ADMIN)
 /**
  * @openapi
  * /solicitudes/{id}/calcular-liquidacion:
  *   post:
  *     tags: [Solicitudes]
- *     summary: Calcular liquidación automática (contabilidad)
+ *     summary: Calcular liquidación final (SOLO ADMIN)
  *     description: |
- *       Calcula automáticamente la liquidación del servicio:
+ *       Calcula automáticamente la liquidación final del servicio.
+ *       **IMPORTANTE**: Solo el administrador puede realizar la liquidación final.
+ *       La preliquidación la realiza contabilidad, pero la liquidación final es exclusiva del admin.
+ *       
+ *       Calcula:
  *       - Total Gastos Operacionales = Suma de gastos vinculados a la solicitud
  *       - Utilidad = valor_a_facturar - valor_cancelado - total_gastos_operacionales
  *       - Porcentaje Utilidad = (utilidad / valor_a_facturar) * 100
@@ -740,7 +745,7 @@ router.put("/:id/reject", CoordinadorAuth, solicitudesController.reject_solicitu
  *         schema: { type: string }
  *     responses:
  *       200:
- *         description: Liquidación calculada
+ *         description: Liquidación final calculada
  *         content:
  *           application/json:
  *             schema:
@@ -758,7 +763,7 @@ router.put("/:id/reject", CoordinadorAuth, solicitudesController.reject_solicitu
  *                     porcentaje_utilidad: { type: number }
  *                     valor_documento_equivalente: { type: number }
  */
-router.post("/:id/calcular-liquidacion", ContabilidadAuth, solicitudesController.calcular_liquidacion.bind(solicitudesController));
+router.post("/:id/calcular-liquidacion", AdminAut, solicitudesController.calcular_liquidacion.bind(solicitudesController));
 
 router.put("/:id/financial", ContabilidadAuth, solicitudesController.update_financial_data.bind(solicitudesController));
 
@@ -828,8 +833,9 @@ router.get("/:id/verify-operationals", ContabilidadAuth, solicitudesController.v
  *       PREF_{CONSECUTIVO_SOLICITUD}_{NOMBRE_CLIENTE}
  *       
  *       Requiere que:
- *       - Todos los vehículos tengan operacional subido
  *       - Valores de venta y costos estén definidos
+ *       
+ *       NOTA: Los operacionales NO son obligatorios - un bus puede no tener gastos operacionales
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -863,9 +869,10 @@ router.post("/:id/generate-prefactura", ContabilidadAuth, solicitudesController.
  *       
  *       Requiere que:
  *       - Todas las solicitudes pertenezcan al mismo cliente
- *       - Todas los vehículos tengan operacional subido
  *       - Valores de venta y costos estén definidos en todas las solicitudes
  *       - Ninguna solicitud tenga prefactura ya generada
+ *       
+ *       NOTA: Los operacionales NO son obligatorios - un bus puede no tener gastos operacionales
  *     security:
  *       - sessionCookie: []
  *     requestBody:
@@ -1396,6 +1403,42 @@ router.get("/export/excel", OperadorContabilidadAuth, solicitudesController.expo
  */
 router.put("/:id/client/approve-prefactura", ClienteAuth, solicitudesController.client_approve_prefactura.bind(solicitudesController));
 
+// Descargar PDF de prefactura (cliente)
+/**
+ * @openapi
+ * /solicitudes/{id}/client/prefactura-pdf:
+ *   get:
+ *     tags: [Solicitudes]
+ *     summary: Descargar PDF de prefactura (cliente)
+ *     description: |
+ *       Permite al cliente descargar el PDF de la prefactura. 
+ *       SOLO el cliente asociado a la solicitud puede descargarla.
+ *       La prefactura debe haber sido enviada al cliente previamente.
+ *     security:
+ *       - sessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID de la solicitud
+ *     responses:
+ *       200:
+ *         description: PDF de prefactura
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       400:
+ *         description: No existe prefactura generada o no ha sido enviada al cliente
+ *       403:
+ *         description: No tiene permiso (solo el cliente asociado puede descargar)
+ *       404:
+ *         description: Solicitud no encontrada
+ */
+router.get("/:id/client/prefactura-pdf", ClienteAuth, solicitudesController.client_download_prefactura_pdf.bind(solicitudesController));
+
 // Rechazar prefactura por el cliente
 /**
  * @openapi
@@ -1406,6 +1449,7 @@ router.put("/:id/client/approve-prefactura", ClienteAuth, solicitudesController.
  *     description: |
  *       Permite al cliente rechazar la prefactura. SOLO el cliente asociado a la solicitud puede rechazarla.
  *       Al rechazar, vuelve a estado "operacional_completo" para que se pueda regenerar la prefactura.
+ *       **IMPORTANTE**: La justificación (notas) es OBLIGATORIA al rechazar la prefactura.
  *     security:
  *       - sessionCookie: []
  *     parameters:
@@ -1415,13 +1459,14 @@ router.put("/:id/client/approve-prefactura", ClienteAuth, solicitudesController.
  *         schema: { type: string }
  *         description: ID de la solicitud
  *     requestBody:
- *       required: false
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [notas]
  *             properties:
- *               notas: { type: string, description: "Notas opcionales" }
+ *               notas: { type: string, description: "Justificación obligatoria para el rechazo" }
  *     responses:
  *       200:
  *         description: Prefactura rechazada exitosamente

@@ -18,7 +18,7 @@
       .section { margin-top: 10px; }
       table { width: 100%; border-collapse: collapse; }
       th, td { border: 1px solid #111; padding: 6px; vertical-align: top; }
-      th { background: #eef2ff; text-align: left; font-weight: 700; }
+      th { background: rgba(22, 63, 95, 0.95); text-align: left; font-weight: 700; color: white;}
       .small { font-size: 11px; color: #333; }
     </style>
   </head>
@@ -70,6 +70,30 @@
           <tr><td><strong>Dirección</strong></td><td>{{direccion}}</td></tr>
           <tr><td><strong>Ciudad</strong></td><td>{{ciudad}}</td></tr>
           <tr><td><strong>Email personal</strong></td><td>{{email_personal}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <table>
+        <thead><tr><th colspan="2">Documentos</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Cédula - Frente</strong></td>
+            <td>{{cedula_front_html}}</td>
+          </tr>
+          <tr>
+            <td><strong>Cédula - Reverso</strong></td>
+            <td>{{cedula_back_html}}</td>
+          </tr>
+          <tr>
+            <td><strong>Licencia de Conducción - Frente</strong></td>
+            <td>{{licencia_front_html}}</td>
+          </tr>
+          <tr>
+            <td><strong>Licencia de Conducción - Reverso</strong></td>
+            <td>{{licencia_back_html}}</td>
+          </tr>
         </tbody>
       </table>
       <div class="small" style="margin-top:6px;">* Los campos se imprimen si están registrados en el sistema.</div>

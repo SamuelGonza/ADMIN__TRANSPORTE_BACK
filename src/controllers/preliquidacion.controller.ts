@@ -171,7 +171,7 @@ export class PreliquidacionController {
     }
 
     /**
-     * Enviar preliquidación al cliente (solo si está aprobada)
+     * Enviar preliquidación al cliente (puede enviarse en cualquier momento)
      */
     public async send_preliquidacion_to_client(req: Request, res: Response) {
         try {
@@ -207,6 +207,45 @@ export class PreliquidacionController {
             res.status(500).json({
                 ok: false,
                 message: "Error al enviar preliquidación al cliente"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Obtener vehículos y gastos operacionales al seleccionar servicios
+     */
+    public async get_vehicles_and_expenses(req: Request, res: Response) {
+        try {
+            const { solicitudes_ids } = req.body;
+            
+            if (!solicitudes_ids || !Array.isArray(solicitudes_ids) || solicitudes_ids.length === 0) {
+                return res.status(400).json({
+                    ok: false,
+                    message: "Debe proporcionar un array de IDs de solicitudes"
+                });
+            }
+
+            const response = await this.preliquidacionService.get_vehicles_and_expenses({
+                solicitudes_ids
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: "Vehículos y gastos obtenidos exitosamente",
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al obtener vehículos y gastos"
             });
             return;
         }
@@ -249,6 +288,42 @@ export class PreliquidacionController {
             res.status(500).json({
                 ok: false,
                 message: "Error al obtener gastos pendientes"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Listar todas las preliquidaciones con paginación
+     */
+    public async list_preliquidaciones(req: Request, res: Response) {
+        try {
+            const { page, limit, estado } = req.query;
+            const company_id = (req as AuthRequest).user?.company_id;
+
+            const response = await this.preliquidacionService.list_preliquidaciones({
+                page: page ? Number(page) : 1,
+                limit: limit ? Number(limit) : 10,
+                estado: estado as any,
+                company_id: company_id as string
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: "Preliquidaciones obtenidas correctamente",
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al listar preliquidaciones"
             });
             return;
         }

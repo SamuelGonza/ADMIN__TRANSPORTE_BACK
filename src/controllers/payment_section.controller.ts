@@ -137,5 +137,42 @@ export class PaymentSectionController {
             return;
         }
     }
+
+    /**
+     * Listar todas las cuentas de cobro con paginación
+     */
+    public async list_cuentas_cobro(req: Request, res: Response) {
+        try {
+            const { page, limit, estado, flota } = req.query;
+            const company_id = (req as AuthRequest).user?.company_id;
+
+            const response = await this.paymentSectionService.list_cuentas_cobro({
+                page: page ? Number(page) : 1,
+                limit: limit ? Number(limit) : 10,
+                estado: estado as any,
+                flota: flota as any,
+                company_id: company_id as string
+            });
+
+            res.status(200).json({
+                ok: true,
+                message: "Cuentas de cobro obtenidas correctamente",
+                data: response
+            });
+        } catch (error) {
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al listar cuentas de cobro"
+            });
+            return;
+        }
+    }
 }
 

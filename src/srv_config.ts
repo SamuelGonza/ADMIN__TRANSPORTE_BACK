@@ -13,6 +13,7 @@ import { swaggerSpec } from "@/swagger";
 import usersRouter from "@/routes/users.routes";
 import companyRouter from "@/routes/company.routes";
 import clientRouter from "@/routes/client.routes";
+import clientUserRouter from "@/routes/client_user.routes";
 import solicitudesRouter from "@/routes/solicitudes.routes";
 import vehiclesRouter from "@/routes/vehicles.routes";
 import contractsRouter from "@/routes/contracts.routes";
@@ -100,6 +101,7 @@ app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/docs`, swaggerUi.serve, swaggerUi.setup(sw
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/users`, usersRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/companies`, companyRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/clients`, clientRouter);
+app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/client_users`, clientUserRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/solicitudes`, solicitudesRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/vehicles`, vehiclesRouter);
 app.use(`${GLOBAL_ENV.ROUTER_SUBFIJE}/contracts`, contractsRouter);

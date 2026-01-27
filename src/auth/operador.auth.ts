@@ -15,8 +15,8 @@ export const OperadorAuth = async (req: Request, res: Response, next: NextFuncti
 
         if(!decoded) if (!decoded) throw new ResponseError(401, "Token inválido");
 
-        // OperadorAuth ahora solo permite contabilidad (las funciones de operador pasaron a contabilidad)
-        const allowedRoles = ["superadmon", "admin", "contabilidad"];
+        // OperadorAuth permite contabilidad y orquestador (gestión de conductores y documentos)
+        const allowedRoles = ["superadmon", "admin", "contabilidad", "orquestador"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos");
         }

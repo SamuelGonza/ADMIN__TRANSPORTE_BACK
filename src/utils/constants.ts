@@ -37,6 +37,12 @@ export const GLOBAL_ENV = {
     ROUTER_SUBFIJE: process.env.ROUTER_SUBFIJE as string,
 
     WEBHOOK_SECRET: process.env.WEBHOOK_SECRET as string,
+
+    // Redis configuration for BullMQ
+    REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+    REDIS_PORT: parseInt(process.env.REDIS_PORT || '6379'),
+    REDIS_PASSWORD: process.env.REDIS_PASSWORD || undefined,
+    REDIS_DB: parseInt(process.env.REDIS_DB || '0'),
 } as const;
 
 export const DEFAULT_PROFILE: MediaTypes = {

@@ -5,45 +5,60 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Preliquidación {{preliquidacion_numero}}</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            background-color: #f4f4f4;
+        }
+            .content { padding: 20px; background-color: #f9f9f9; }
         .header {
+            background-color: rgba(22, 63, 95, 0.95);
+            padding: 30px 20px;
             text-align: center;
-            border-bottom: 2px solid #333;
-            padding-bottom: 20px;
-            margin-bottom: 20px;
+            color: white;
         }
         .content {
             margin-bottom: 20px;
         }
-        .footer {
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #ddd;
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+             .footer {
+            background-color: rgba(22, 63, 95, 0.95);
+            padding: 30px 20px;
             text-align: center;
-            font-size: 12px;
-            color: #666;
+            color: #ffffff;
+            font-size: 14px;
         }
-        .button {
-            display: inline-block;
-            padding: 12px 24px;
-            background-color: #007bff;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            margin-top: 20px;
+      .button { display: inline-block; padding: 10px 20px; background-color: rgba(22, 63, 95, 0.95); color: white; text-decoration: none; border-radius: 25px; margin-top: 20px; margin-bottom: 20px; }
+          .logo-tecnotics {
+        filter: invert(1) grayscale(1);
+        width: 20%;
+      }
+      
+                    .footer-text {
+            margin-bottom: 10px;
         }
+      
+            .logo-admin-transporte {
+        width: 60%;
+        border-bottom: 1px solid white;
+              margin: 5px;
+      }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Preliquidación N° {{preliquidacion_numero}}</h1>
+  <div class="container">
+        <div class="header">
+                              <div class="logo"><img class="logo-admin-transporte" 
+             src="https://res.cloudinary.com/appsftw/image/upload/v1769031962/zgfbgd6zwwv86z3px8uc.png" 
+             alt="TecnoTics · Soluciones corporativas">
+    </a></div>
+        <h2>Preliquidación N° {{preliquidacion_numero}}</h2>
     </div>
     
     <div class="content">
@@ -67,9 +82,22 @@
         <strong>{{company_name}}</strong></p>
     </div>
     
-    <div class="footer">
-        <p>&copy; {{year}} Admin Transporte. Todos los derechos reservados.</p>
-        <p>Este es un correo automático, por favor no responda a este mensaje.</p>
-    </div>
+      <div class="footer">
+            <div class="footer-text">
+                © {{year}} AdminTransporte. Todos los derechos reservados.
+            </div>
+<div class="footer-text">
+    Desarrollado por
+</div>
+<div class="footer-text">
+    <a href="https://tecnotics.com" class="footer-link">
+        <img class="logo-tecnotics" 
+             src="https://res.cloudinary.com/appsftw/image/upload/v1756413778/nfhy5s2aniujveaurx8v.png" 
+             alt="TecnoTics · Soluciones corporativas">
+    </a>
+</div>
+
+        </div>
+  </div>
 </body>
 </html>

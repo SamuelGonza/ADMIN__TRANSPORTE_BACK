@@ -111,6 +111,40 @@ export const send_client_new_password = async ({
     }
 };
 
+// 2.1. Cliente Usuario - Credenciales de acceso
+export const send_client_user_credentials = async ({
+    full_name,
+    email,
+    password,
+    client_name
+}: {
+    full_name: string;
+    email: string;
+    password: string;
+    client_name: string;
+}) => {
+    try {
+        const templatePath = path.join(__dirname, "templates", "cliente-usuario-credenciales.html");
+        const html_template = fs.readFileSync(templatePath, "utf8");
+
+        const html_final = replaceVariables(html_template, {
+            full_name,
+            email,
+            password,
+            client_name,
+            year: YEAR.toString()
+        });
+
+        await sendEmail(email, "Credenciales de Acceso - Admin Transporte", html_final);
+        console.log(`Email de credenciales enviado exitosamente a usuario de cliente: ${email}`);
+    } catch (error) {
+        console.error("Error al enviar email de credenciales de cliente usuario:", error);
+        if (error instanceof ResponseError) throw error;
+        // Propagar el error para que el servicio pueda manejarlo
+        throw new ResponseError(500, `Error al enviar email de credenciales al usuario de cliente: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    }
+};
+
 // 3. Coordinador - Nueva solicitud pendiente
 export const send_coordinator_new_solicitud = async ({
     coordinator_name,
@@ -375,9 +409,12 @@ export const send_user_verification_otp = async ({
         });
 
         await sendEmail(email, "Verificación de Cuenta - Admin Transporte", html_final);
+        console.log(`Email de verificación OTP enviado exitosamente a usuario: ${email}`);
     } catch (error) {
+        console.error("Error al enviar email de verificación OTP:", error);
         if (error instanceof ResponseError) throw error;
-        console.log("Error al enviar email de verificación OTP:", error);
+        // Propagar el error para que el servicio pueda manejarlo
+        throw new ResponseError(500, `Error al enviar email de verificación OTP: ${error instanceof Error ? error.message : 'Error desconocido'}`);
     }
 };
 
@@ -649,6 +686,11 @@ export const send_client_prefactura = async ({
             ? `<p><strong>Notas:</strong> ${notas}</p>`
             : '';
 
+        // Detectar si hay múltiples servicios (si he contiene un guión, es múltiple)
+        const isMultiple = he.includes(' - ');
+        const servicioTexto = isMultiple ? 'a los servicios' : 'al servicio';
+        const servicioTextoDetalle = isMultiple ? 'de los servicios' : 'del servicio';
+
         // Si no se proporciona dashboard_link, usar un link genérico (el frontend debería configurar esto)
         const dashboardUrl = dashboard_link || `${process.env.FRONTEND_URL || 'https://dashboard.example.com'}/prefacturas/${he}`;
 
@@ -657,6 +699,8 @@ export const send_client_prefactura = async ({
             company_name,
             prefactura_numero,
             he,
+            servicio_texto: servicioTexto,
+            servicio_texto_detalle: servicioTextoDetalle,
             notas_section: notasSection,
             dashboard_link: dashboardUrl,
             year: YEAR.toString()
@@ -671,9 +715,13 @@ export const send_client_prefactura = async ({
             }
         ];
 
+        const emailSubject = isMultiple 
+            ? `Prefactura N° ${prefactura_numero} - Servicios ${he} - Admin Transporte`
+            : `Prefactura N° ${prefactura_numero} - Servicio ${he} - Admin Transporte`;
+
         await sendEmail(
             client_email, 
-            `Prefactura N° ${prefactura_numero} - Servicio ${he} - Admin Transporte`, 
+            emailSubject, 
             html_final, 
             attachments
         );

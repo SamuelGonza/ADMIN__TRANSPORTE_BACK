@@ -21,10 +21,11 @@
             margin: 0 auto;
             background-color: #ffffff;
         }
-        .header {
-            background-color: #1a1a1a;
+              .header {
+            background-color: rgba(22, 63, 95, 0.95);
             padding: 30px 20px;
             text-align: center;
+            color: white;
         }
         .logo {
             color: #ffffff;
@@ -49,7 +50,7 @@
         }
         .info-box {
             background-color: #f8f9fa;
-            border-left: 4px solid #007bff;
+            border-left: 4px solid rgba(22, 63, 95, 0.95);
             padding: 20px;
             margin: 30px 0;
             border-radius: 4px;
@@ -81,8 +82,8 @@
             font-size: 14px;
             color: #155724;
         }
-        .footer {
-            background-color: #1a1a1a;
+       .footer {
+            background-color: rgba(22, 63, 95, 0.95);
             padding: 30px 20px;
             text-align: center;
             color: #ffffff;
@@ -98,14 +99,24 @@
         .footer-link:hover {
             text-decoration: underline;
         }
+                             .logo-tecnotics {
+        filter: invert(1) grayscale(1);
+        width: 20%;
+      }
+                  .logo-admin-transporte {
+        width: 60%;
+
+      }
     </style>
 </head>
 <body>
     <div class="email-container">
-        <div class="header">
-            <div class="logo">AdminTransporte</div>
-        </div>
-        
+      <div class="header">
+                            <div class="logo"><img class="logo-admin-transporte" 
+             src="https://res.cloudinary.com/appsftw/image/upload/v1769031962/zgfbgd6zwwv86z3px8uc.png" 
+             alt="TecnoTics · Soluciones corporativas">
+    </a></div>
+      </div>
         <div class="content">
             <div class="greeting">Hola {{owner_name}},</div>
             
@@ -145,13 +156,21 @@
             </div>
         </div>
         
-        <div class="footer">
+      <div class="footer">
             <div class="footer-text">
                 © {{year}} AdminTransporte. Todos los derechos reservados.
             </div>
-            <div class="footer-text">
-                Desarrollado por <a href="https://tecnotics.com" class="footer-link">Tecnotics</a>
-            </div>
+<div class="footer-text">
+    Desarrollado por
+</div>
+<div class="footer-text">
+    <a href="https://tecnotics.com" class="footer-link">
+        <img class="logo-tecnotics" 
+             src="https://res.cloudinary.com/appsftw/image/upload/v1756413778/nfhy5s2aniujveaurx8v.png" 
+             alt="TecnoTics · Soluciones corporativas">
+    </a>
+</div>
+
         </div>
     </div>
 </body>

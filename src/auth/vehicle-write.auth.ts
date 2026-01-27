@@ -10,6 +10,7 @@ import jwt from 'jsonwebtoken'
  * - admin: administra su empresa
  * - coordinador_operador: operación (asignaciones/validaciones)
  * - coordinador_comercial: gestión comercial
+ * - orquestador: gestión de vehículos y documentos
  */
 export const VehicleWriteAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -21,7 +22,7 @@ export const VehicleWriteAuth = async (req: Request, res: Response, next: NextFu
 
         if(!decoded) throw new ResponseError(401, "Token inválido");
 
-        const allowedRoles = ["admin", "coordinador_operador", "coordinador_comercial"];
+        const allowedRoles = ["admin", "coordinador_operador", "coordinador_comercial", "orquestador"];
         if(!allowedRoles.includes(decoded.role)) {
             throw new ResponseError(401, "No tienes permisos para realizar esta operación");
         }

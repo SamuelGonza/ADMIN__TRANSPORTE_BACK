@@ -6,6 +6,7 @@ import { ClientService } from "./client.service";
 import { ResponseError } from '@/utils/errors';
 import { BitacoraSolicitud } from '@/contracts/interfaces/bitacora.interface';
 import { send_coordinator_new_solicitud, send_client_solicitud_approved, send_client_prefactura } from '@/email/index.email';
+import EmailQueue, { EmailJobType } from '@/queues/email.queue';
 import userModel from '@/models/user.model';
 import dayjs from 'dayjs';
 import { ContractsService } from './contracts.service';
@@ -540,9 +541,10 @@ export class SolicitudesService {
                 // Formatear fecha
                 const fecha_formatted = dayjs(payload.fecha).format('DD/MM/YYYY');
 
-                // Enviar email a cada coordinador
+                // Enviar email a cada coordinador (en segundo plano)
+                const emailQueue = EmailQueue.getInstance();
                 for (const coordinator of coordinators) {
-                    await send_coordinator_new_solicitud({
+                    await emailQueue.addJob(EmailJobType.SEND_COORDINATOR_NEW_SOLICITUD, {
                         coordinator_name: coordinator.full_name,
                         coordinator_email: coordinator.email,
                         client_name: client.name, // Nombre del cliente, no del contacto
@@ -1333,9 +1335,10 @@ export class SolicitudesService {
                 await solicitud.save();
             }
 
-            // Enviar correos cuando la solicitud está completamente rellenada
+            // Enviar correos cuando la solicitud está completamente rellenada (en segundo plano)
             try {
-                await this.send_emails_solicitud_complete({
+                const emailQueue = EmailQueue.getInstance();
+                await emailQueue.addJob(EmailJobType.SEND_SOLICITUD_COMPLETE_EMAILS, {
                     solicitud_id: solicitud._id.toString()
                 });
             } catch (emailError) {
@@ -3024,10 +3027,10 @@ export class SolicitudesService {
                 .findById(id)
                 .populate('cliente', 'name email contacts phone')
                 .populate('vehiculo_id', 'placa type flota seats')
-                .populate('conductor', 'name phone email')
-                .populate('created_by', 'name email')
+                .populate('conductor', 'full_name contact email')
+                .populate('created_by', 'full_name email')
                 .populate('vehicle_assignments.vehiculo_id', 'placa type flota seats')
-                .populate('vehicle_assignments.conductor_id', 'name phone email')
+                .populate('vehicle_assignments.conductor_id', 'full_name contact email')
                 .lean();
 
             if (!solicitud) throw new ResponseError(404, "Solicitud no encontrada");
@@ -3043,12 +3046,20 @@ export class SolicitudesService {
                     seats: (sol.vehiculo_id as any)?.seats || sol.n_pasajeros || 0,
                     assigned_passengers: sol.n_pasajeros || 0,
                     conductor_id: sol.conductor || null,
-                    conductor_phone: sol.conductor_phone || (sol.conductor?.phone) || "",
+                    conductor_phone: sol.conductor_phone || (sol.conductor?.contact?.phone) || "",
                     contract_id: sol.contract_id || null,
                     contract_charge_mode: sol.contract_charge_mode || "no_contract",
                     contract_charge_amount: sol.contract_charge_amount || 0,
                     accounting: sol.vehicle_assignments?.[0]?.accounting || {}
                 }];
+            } else if (sol.vehicle_assignments && sol.vehicle_assignments.length > 0) {
+                // Si hay vehicle_assignments, eliminar campos individuales duplicados del nivel superior
+                delete sol.vehiculo_id;
+                delete sol.placa;
+                delete sol.tipo_vehiculo;
+                delete sol.flota;
+                delete sol.conductor;
+                delete sol.conductor_phone;
             }
 
             // Calcular valor_cancelado desde PaymentSection si existe
@@ -3719,7 +3730,8 @@ export class SolicitudesService {
 
     /**
      * Generar prefactura para una solicitud
-     * Requiere que todos los vehículos tengan operacional subido
+     * Requiere valores de venta y costos definidos
+     * NOTA: Los operacionales NO son obligatorios - un bus puede no tener gastos
      * El número se genera automáticamente con el formato: PREF_{HE}_{NOMBRE_CLIENTE}
      */
     public async generate_prefactura({
@@ -3743,16 +3755,7 @@ export class SolicitudesService {
                 throw new ResponseError(400, "La solicitud no tiene valores de costos definidos");
             }
 
-            // Verificar que todos los vehículos tengan operacional
-            // No actualizar estado aquí porque ya estamos en el flujo de generar prefactura
-            const operationalCheck = await this.verify_operationals_complete({ 
-                solicitud_id,
-                auto_update_status: false 
-            });
-            if (!operationalCheck.all_complete) {
-                const missingPlacas = operationalCheck.missing_operationals.map(v => v.placa).join(", ");
-                throw new ResponseError(400, `Faltan operacionales para los siguientes vehículos: ${missingPlacas}`);
-            }
+            // NOTA: Los operacionales NO son obligatorios - un bus puede no tener gastos
 
             // Validar que no haya una prefactura ya generada
             if ((solicitud as any).prefactura?.numero) {
@@ -3793,12 +3796,27 @@ export class SolicitudesService {
 
             await solicitud.save();
 
+            // Enviar automáticamente la prefactura al cliente
+            // Si falla el envío, lanzar el error para que el usuario sepa
+            await this.send_prefactura_to_client({
+                solicitud_id,
+                user_id,
+                notas: undefined
+            });
+
+            // Recargar la solicitud para asegurar que todos los campos estén actualizados
+            const solicitudActualizada = await solicitudModel.findById(solicitud_id).lean();
+            if (!solicitudActualizada) {
+                throw new ResponseError(404, "Solicitud no encontrada después de guardar");
+            }
+
             // Populizar IDs de prefactura antes de retornar
-            const solicitudObj = solicitud.toObject();
+            const solicitudObj = solicitudActualizada as any;
             await this.populate_prefactura_ids(solicitudObj);
 
             return {
-                message: "Prefactura generada exitosamente",
+                message: "Prefactura generada y enviada al cliente exitosamente",
+                prefactura_numero: prefactura_numero,
                 solicitud: solicitudObj
             };
         } catch (error) {
@@ -3883,15 +3901,7 @@ export class SolicitudesService {
                     continue;
                 }
 
-                // Validar operacionales
-                const operationalCheck = await this.verify_operationals_complete({ 
-                    solicitud_id: solicitud._id.toString(),
-                    auto_update_status: false 
-                });
-                if (!operationalCheck.all_complete) {
-                    const missingPlacas = operationalCheck.missing_operationals.map(v => v.placa).join(", ");
-                    errores.push(`Faltan operacionales en la solicitud ${solicitud.he} para los vehículos: ${missingPlacas}`);
-                }
+                // NOTA: Los operacionales NO son obligatorios - un bus puede no tener gastos
 
                 // Validar que tenga consecutivo (HE)
                 if (!solicitud.he) {
@@ -3939,8 +3949,74 @@ export class SolicitudesService {
                 solicitudesActualizadas.push(solicitudObj);
             }
 
+            // Generar un solo PDF con todas las solicitudes
+            const { filename, buffer } = await this.generate_prefactura_multiple_pdf({
+                solicitud_ids: solicitudes.map(s => s._id.toString()),
+                prefactura_numero
+            });
+
+            // Obtener información del cliente para el correo (reutilizar variables ya declaradas)
+            const company = (cliente as any)?.company_id;
+
+            if (!cliente) {
+                throw new ResponseError(400, "No se pudo obtener la información del cliente");
+            }
+
+            const contactoName = (cliente?.contacts && Array.isArray(cliente.contacts) && cliente.contacts.length > 0) 
+                ? cliente.contacts[0].name 
+                : ((primeraSolicitud as any).contacto || cliente?.name || 'N/A');
+            const clienteEmail = cliente?.email;
+
+            if (!clienteEmail) {
+                throw new ResponseError(400, "El cliente no tiene un email registrado");
+            }
+
+            // Generar display de HEs para el correo (reutilizar variables ya declaradas)
+            const heDisplay = hesOrdenados.length === 1 
+                ? hePrimera 
+                : `${hePrimera} - ${heUltima}`;
+
+            // Generar link al dashboard del cliente
+            const frontendUrl = process.env.FRONTEND_URL || 'https://dashboard.example.com';
+            const dashboardLink = `${frontendUrl}/prefacturas/${primeraSolicitud._id.toString()}`;
+
+            // Enviar un solo correo con el PDF único
+            await send_client_prefactura({
+                client_name: contactoName,
+                client_email: clienteEmail,
+                company_name: company?.company_name || 'Empresa',
+                prefactura_numero: prefactura_numero,
+                he: heDisplay,
+                prefactura_pdf: { filename, buffer },
+                notas: undefined,
+                dashboard_link: dashboardLink
+            });
+
+            // Actualizar todas las solicitudes para marcar que fueron enviadas
+            for (const solicitud of solicitudes) {
+                const solicitudToUpdate = await solicitudModel.findById(solicitud._id);
+                if (!solicitudToUpdate) continue;
+
+                // Inicializar prefactura si no existe completamente
+                if (!(solicitudToUpdate as any).prefactura) {
+                    (solicitudToUpdate as any).prefactura = {};
+                }
+
+                // Actualizar estado
+                (solicitudToUpdate as any).prefactura.estado = "pendiente";
+                (solicitudToUpdate as any).prefactura.enviada_al_cliente = true;
+                (solicitudToUpdate as any).prefactura.fecha_envio_cliente = new Date();
+                (solicitudToUpdate as any).prefactura.enviada_por = user_id;
+
+                // Cambiar accounting_status a esperando_aprobacion_cliente
+                (solicitudToUpdate as any).accounting_status = "esperando_aprobacion_cliente";
+                (solicitudToUpdate as any).last_modified_by = user_id;
+
+                await solicitudToUpdate.save();
+            }
+
             return {
-                message: `Prefactura generada exitosamente para ${solicitudes.length} solicitud(es)`,
+                message: `Prefactura múltiple generada y enviada al cliente exitosamente para ${solicitudes.length} solicitud(es)`,
                 prefactura_numero: prefactura_numero,
                 solicitudes: solicitudesActualizadas
             };
@@ -4193,18 +4269,17 @@ export class SolicitudesService {
             }
 
             // Actualizar estado
-            (solicitudToUpdate as any).prefactura.estado = "aceptada";
+            (solicitudToUpdate as any).prefactura.estado = "pendiente"; // Cambiar a pendiente cuando se envía al cliente
             (solicitudToUpdate as any).prefactura.enviada_al_cliente = true;
             (solicitudToUpdate as any).prefactura.fecha_envio_cliente = new Date();
             (solicitudToUpdate as any).prefactura.enviada_por = user_id;
 
-            // Agregar entrada al historial
-            (solicitudToUpdate as any).prefactura.historial_envios.push({
-                fecha: new Date(),
-                estado: "aceptada",
-                enviado_por: user_id,
-                notas: notas || undefined
-            });
+            // Cambiar accounting_status a esperando_aprobacion_cliente
+            (solicitudToUpdate as any).accounting_status = "esperando_aprobacion_cliente";
+
+            // NOTA: No agregamos al historial_envios cuando se envía
+            // El historial_envios solo registra acciones del cliente (aceptada/rechazada)
+            // El envío se rastrea con fecha_envio_cliente y enviada_por
 
             (solicitudToUpdate as any).last_modified_by = user_id;
 
@@ -4510,7 +4585,7 @@ export class SolicitudesService {
      * Envía al cliente: hojas de vida de conductores, SOATs, licencias, fichas técnicas de vehículos
      * Envía a cada conductor: manifiesto de pasajeros con información del servicio
      */
-    private async send_emails_solicitud_complete({
+    public async send_emails_solicitud_complete({
         solicitud_id
     }: {
         solicitud_id: string;
@@ -5424,6 +5499,208 @@ export class SolicitudesService {
     }
 
     /**
+     * Generar PDF de prefactura múltiple con todas las solicitudes
+     */
+    public async generate_prefactura_multiple_pdf({
+        solicitud_ids,
+        prefactura_numero
+    }: {
+        solicitud_ids: string[];
+        prefactura_numero: string;
+    }): Promise<{ filename: string; buffer: Buffer }> {
+        try {
+            // Obtener todas las solicitudes con sus relaciones
+            const solicitudes = await solicitudModel.find({
+                _id: { $in: solicitud_ids }
+            })
+                .populate({
+                    path: 'cliente',
+                    select: 'name contacts phone email company_id',
+                    populate: {
+                        path: 'company_id',
+                        select: 'company_name document logo'
+                    }
+                })
+                .populate('conductor', 'full_name')
+                .populate('vehiculo_id', 'placa type')
+                .populate('vehicle_assignments.vehiculo_id', 'placa type')
+                .populate('vehicle_assignments.conductor_id', 'full_name')
+                .lean()
+                .sort({ he: 1 }); // Ordenar por HE
+
+            if (!solicitudes || solicitudes.length === 0) {
+                throw new ResponseError(404, "No se encontraron solicitudes");
+            }
+
+            // Validar que todas tengan la misma prefactura
+            const primeraSolicitud = solicitudes[0];
+            const client = (primeraSolicitud as any).cliente;
+            const company = (client as any)?.company_id;
+
+            if (!client) {
+                throw new ResponseError(400, "No se pudo obtener la información del cliente");
+            }
+
+            const fechaExpedicion = dayjs(new Date()).format("DD/MM/YYYY");
+            const nit = company?.document?.number
+                ? `${company.document.number}${company.document.dv ? "-" + company.document.dv : ""}`
+                : "";
+
+            // Formatear valores monetarios
+            const formatCurrency = (value: number) => {
+                return new Intl.NumberFormat('es-CO', {
+                    style: 'currency',
+                    currency: 'COP',
+                    minimumFractionDigits: 0
+                }).format(value || 0);
+            };
+
+            // Preparar variables para el template
+            const clienteName = client?.name || 'N/A';
+            const contactoNombre = (primeraSolicitud as any).contacto || (client?.contacts && client.contacts.length > 0 ? client.contacts[0].name : 'N/A');
+            const contactoTelefono = (primeraSolicitud as any).contacto_phone || (client?.contacts && client.contacts.length > 0 ? client.contacts[0].phone : 'N/A');
+            const clienteEmail = client?.email || 'N/A';
+
+            // Generar tabla de servicios resumida
+            let serviciosTableRows = '';
+            let valorTotal = 0;
+            
+            solicitudes.forEach((solicitud: any) => {
+                const fechaInicio = dayjs(solicitud.fecha).format('DD/MM/YYYY');
+                const fechaFinal = dayjs(solicitud.fecha_final).format('DD/MM/YYYY');
+                const valor = solicitud.valor_a_facturar || 0;
+                valorTotal += valor;
+
+                serviciosTableRows += `
+                    <tr>
+                        <td>${solicitud.he || 'N/A'}</td>
+                        <td>${fechaInicio}</td>
+                        <td>${fechaFinal}</td>
+                        <td>${solicitud.origen || 'N/A'}</td>
+                        <td>${solicitud.destino || 'N/A'}</td>
+                        <td>${solicitud.n_pasajeros || 0}</td>
+                        <td class="text-right">${formatCurrency(valor)}</td>
+                    </tr>
+                `;
+            });
+
+            // Generar detalle de servicios
+            let detalleServicios = '';
+            solicitudes.forEach((solicitud: any, index: number) => {
+                const fechaInicio = dayjs(solicitud.fecha).format('DD/MM/YYYY');
+                const fechaFinal = dayjs(solicitud.fecha_final).format('DD/MM/YYYY');
+                
+                // Generar tabla de vehículos y conductores para este servicio
+                let vehiculosTableRows = '';
+                const vehicleAssignments = solicitud.vehicle_assignments || [];
+                
+                if (vehicleAssignments.length > 0) {
+                    vehiculosTableRows = vehicleAssignments.map((assignment: any) => {
+                        const vehiculo = assignment.vehiculo_id;
+                        const conductor = assignment.conductor_id;
+                        const placa = vehiculo?.placa || assignment.placa || 'N/A';
+                        const conductorName = conductor?.full_name || 'N/A';
+                        const pasajeros = assignment.assigned_passengers || 0;
+                        return `<tr><td>${placa}</td><td>${conductorName}</td><td>${pasajeros}</td></tr>`;
+                    }).join('');
+                } else if (solicitud.vehiculo_id && solicitud.conductor) {
+                    const placa = (solicitud.vehiculo_id as any)?.placa || 'N/A';
+                    const conductorName = (solicitud.conductor as any)?.full_name || 'N/A';
+                    const pasajeros = solicitud.n_pasajeros || 0;
+                    vehiculosTableRows = `<tr><td>${placa}</td><td>${conductorName}</td><td>${pasajeros}</td></tr>`;
+                } else {
+                    vehiculosTableRows = '<tr><td colspan="3">No hay vehículos asignados</td></tr>';
+                }
+
+                const novedadesSection = solicitud.novedades 
+                    ? `<div class="info-section"><h4>Novedades</h4><p>${String(solicitud.novedades).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p></div>`
+                    : '';
+
+                detalleServicios += `
+                    <div class="service-section">
+                        <div class="service-header">
+                            <h3>Servicio ${solicitud.he || 'N/A'}</h3>
+                        </div>
+                        <table>
+                            <tr><td><strong>Fecha de Inicio:</strong></td><td>${fechaInicio}</td></tr>
+                            <tr><td><strong>Fecha Final:</strong></td><td>${fechaFinal}</td></tr>
+                            <tr><td><strong>Hora de Inicio:</strong></td><td>${solicitud.hora_inicio || 'N/A'}</td></tr>
+                            <tr><td><strong>Origen:</strong></td><td>${solicitud.origen || 'N/A'}</td></tr>
+                            <tr><td><strong>Destino:</strong></td><td>${solicitud.destino || 'N/A'}</td></tr>
+                            <tr><td><strong>N° Pasajeros:</strong></td><td>${solicitud.n_pasajeros || 0}</td></tr>
+                        </table>
+                        <div class="info-section">
+                            <h4>Vehículos y Conductores Asignados</h4>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Placa</th>
+                                        <th>Conductor</th>
+                                        <th>Pasajeros Asignados</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${vehiculosTableRows}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="info-section">
+                            <h4>Valor del Servicio</h4>
+                            <table>
+                                <tr>
+                                    <td><strong>Valor:</strong></td>
+                                    <td class="text-right" style="font-weight: bold;">${formatCurrency(solicitud.valor_a_facturar || 0)}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        ${novedadesSection}
+                    </div>
+                `;
+            });
+
+            // Combinar novedades de todas las solicitudes si existen
+            const todasNovedades = solicitudes
+                .filter((s: any) => s.novedades)
+                .map((s: any) => `HE ${s.he}: ${s.novedades}`)
+                .join('<br>');
+            
+            const novedadesSection = todasNovedades
+                ? `<div class="info-section"><h3>Novedades Generales</h3><p>${todasNovedades.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p></div>`
+                : '';
+
+            // Leer template HTML
+            const templatePath = this.resolveTemplatePath("prefactura-multiple.html");
+            if (!fs.existsSync(templatePath)) {
+                throw new ResponseError(500, `Template de prefactura múltiple no encontrado en: ${templatePath}`);
+            }
+            
+            const htmlTemplate = fs.readFileSync(templatePath, "utf8");
+            const html = this.replaceVariables(htmlTemplate, {
+                prefactura_numero: String(prefactura_numero || 'N/A'),
+                company_name: String(company?.company_name || 'Empresa'),
+                company_nit: String(nit || 'N/A'),
+                cliente_name: String(clienteName),
+                contacto: String(contactoNombre),
+                contacto_phone: String(contactoTelefono),
+                cliente_email: String(clienteEmail),
+                servicios_table: serviciosTableRows,
+                detalle_servicios: detalleServicios,
+                valor_total: formatCurrency(valorTotal),
+                novedades_section: novedadesSection,
+                fecha_expedicion: fechaExpedicion
+            });
+
+            const pdfBuffer = await renderHtmlToPdfBuffer(html);
+            const filename = `prefactura_${prefactura_numero}_${dayjs().format("YYYYMMDD_HHmm")}.pdf`;
+            return { filename, buffer: pdfBuffer };
+        } catch (error) {
+            if (error instanceof ResponseError) throw error;
+            console.error("Error al generar PDF de prefactura múltiple:", error);
+            throw new ResponseError(500, `Error al generar PDF de prefactura múltiple: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /**
      * Helper para populizar los IDs de la prefactura
      * Populiza: aprobada_por, rechazada_por, enviada_por, historial_envios[].enviado_por
      */
@@ -6039,6 +6316,16 @@ export class SolicitudesService {
                 throw new ResponseError(400, "La prefactura aún no ha sido enviada al cliente");
             }
 
+            // Si la prefactura fue enviada pero el accounting_status no está correcto, corregirlo automáticamente
+            // Esto puede pasar si hubo un error durante el envío pero la prefactura sí se envió
+            if ((solicitud as any).accounting_status !== "esperando_aprobacion_cliente") {
+                // Guardar el estado anterior para el log
+                const estadoAnterior = (solicitud as any).accounting_status;
+                // Si fue enviada al cliente, actualizar el estado automáticamente
+                (solicitud as any).accounting_status = "esperando_aprobacion_cliente";
+                console.warn(`Corrigiendo accounting_status de "${estadoAnterior}" a "esperando_aprobacion_cliente" para solicitud ${solicitud_id}`);
+            }
+
             // Validar que no esté ya aprobada
             if ((solicitud as any).prefactura?.estado === "aceptada") {
                 throw new ResponseError(400, "La prefactura ya fue aprobada");
@@ -6087,6 +6374,7 @@ export class SolicitudesService {
     /**
      * Rechazar prefactura por el cliente
      * SOLO el cliente asociado a la solicitud puede rechazar la prefactura
+     * REQUIERE justificación (notas) obligatoria
      */
     public async client_reject_prefactura({
         solicitud_id,
@@ -6115,14 +6403,27 @@ export class SolicitudesService {
                 throw new ResponseError(400, "La prefactura aún no ha sido enviada al cliente");
             }
 
+            // Si la prefactura fue enviada pero el accounting_status no está correcto, corregirlo automáticamente
+            // Esto puede pasar si hubo un error durante el envío pero la prefactura sí se envió
+            if ((solicitud as any).accounting_status !== "esperando_aprobacion_cliente") {
+                // Guardar el estado anterior para el log
+                const estadoAnterior = (solicitud as any).accounting_status;
+                // Si fue enviada al cliente, actualizar el estado automáticamente
+                (solicitud as any).accounting_status = "esperando_aprobacion_cliente";
+                console.warn(`Corrigiendo accounting_status de "${estadoAnterior}" a "esperando_aprobacion_cliente" para solicitud ${solicitud_id}`);
+            }
+
+            // Validar que se proporcione justificación (notas) obligatoria
+            if (!notas || notas.trim().length === 0) {
+                throw new ResponseError(400, "La justificación es obligatoria al rechazar la prefactura. Por favor, proporcione una razón para el rechazo.");
+            }
+
             // Rechazar prefactura
             (solicitud as any).prefactura.estado = "rechazada";
             (solicitud as any).prefactura.aprobada = false;
             (solicitud as any).prefactura.rechazada_por = client_id;
             (solicitud as any).prefactura.rechazada_fecha = new Date();
-            if (notas) {
-                (solicitud as any).prefactura.notas = notas;
-            }
+            (solicitud as any).prefactura.notas = notas; // Guardar la justificación obligatoria
 
             // Actualizar historial
             if (!(solicitud as any).prefactura.historial_envios) {
@@ -6243,6 +6544,53 @@ export class SolicitudesService {
     }
 
     /**
+     * Actualizar accounting_status basándose en si hay contrato_venta y contratos_compra
+     * - Si falta contrato_venta → "faltan_ventas"
+     * - Si falta contrato_compra en todos los vehículos → "faltan_costos"
+     * - Si ambos están → "pendiente_operacional" (si estaba en no_iniciado o estados iniciales)
+     */
+    private actualizar_accounting_status_por_contratos(solicitud: any): void {
+        const contrato_venta = (solicitud as any).contrato_venta;
+        const vehicle_assignments = (solicitud as any).vehicle_assignments || [];
+        
+        // Verificar si hay contrato_venta con valor
+        const tiene_venta = contrato_venta?.valor_calculado && contrato_venta.valor_calculado > 0;
+        
+        // Verificar si hay al menos un vehículo con contrato_compra
+        const tiene_costos = vehicle_assignments.some((a: any) => 
+            a.contrato_compra?.valor_calculado && a.contrato_compra.valor_calculado > 0
+        );
+        
+        const currentStatus = (solicitud as any).accounting_status;
+        
+        // Solo actualizar si está en estados iniciales o relacionados con contratos
+        const estados_actualizables = ["no_iniciado", "faltan_ventas", "faltan_costos", "pendiente_operacional"];
+        
+        if (!estados_actualizables.includes(currentStatus)) {
+            // Si ya está en un estado avanzado, no cambiar
+            return;
+        }
+        
+        if (!tiene_venta && !tiene_costos) {
+            // Ambos faltan - mantener no_iniciado o cambiar a faltan_ventas (prioridad)
+            if (currentStatus === "no_iniciado") {
+                (solicitud as any).accounting_status = "faltan_ventas";
+            }
+        } else if (!tiene_venta) {
+            // Solo falta venta
+            (solicitud as any).accounting_status = "faltan_ventas";
+        } else if (!tiene_costos) {
+            // Solo faltan costos
+            (solicitud as any).accounting_status = "faltan_costos";
+        } else {
+            // Ambos están - avanzar a pendiente_operacional si estaba en estados iniciales
+            if (currentStatus === "no_iniciado" || currentStatus === "faltan_ventas" || currentStatus === "faltan_costos") {
+                (solicitud as any).accounting_status = "pendiente_operacional";
+            }
+        }
+    }
+
+    /**
      * Actualizar datos del servicio (hora_final, kilometros_reales)
      * Recalcula AUTOMÁTICAMENTE todos los contratos que dependan de horas/km
      */
@@ -6339,6 +6687,9 @@ export class SolicitudesService {
             solicitud.porcentaje_utilidad = porcentaje_utilidad;
             (solicitud as any).last_modified_by = user_id;
 
+            // Actualizar accounting_status basándose en contratos
+            this.actualizar_accounting_status_por_contratos(solicitud);
+
             await solicitud.save();
 
             // Sincronizar PaymentSection para que tenga los valores actualizados
@@ -6389,6 +6740,7 @@ export class SolicitudesService {
         payload: {
             contract_id: string;                     // ID del contrato a usar
             pricing_mode: "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
+            tarifa?: number;                         // Opcional: tarifa personalizada (sobrescribe la del contrato)
             cantidad?: number;                       // Opcional: si no se proporciona, se calcula de la solicitud
             valor_manual?: number;                   // Opcional: sobrescribir el cálculo
             usar_valor_manual?: boolean;             // Si true, usar valor_manual
@@ -6425,10 +6777,17 @@ export class SolicitudesService {
                 (solicitud as any).kilometros_reales = payload.kilometros_reales;
             }
 
-            // Obtener la tarifa del contrato
-            const tarifa = this.obtener_tarifa_contrato(contract, payload.pricing_mode);
-            if (tarifa === null) {
-                throw new ResponseError(400, `El contrato no tiene tarifa definida para el modo "${payload.pricing_mode}"`);
+            // Obtener la tarifa: usar la del payload si se proporciona, sino usar la del contrato
+            let tarifa: number | null = null;
+            if (payload.tarifa !== undefined && payload.tarifa !== null) {
+                // Usar la tarifa proporcionada en el payload
+                tarifa = payload.tarifa;
+            } else {
+                // Obtener la tarifa del contrato
+                tarifa = this.obtener_tarifa_contrato(contract, payload.pricing_mode);
+                if (tarifa === null) {
+                    throw new ResponseError(400, `El contrato no tiene tarifa definida para el modo "${payload.pricing_mode}"`);
+                }
             }
 
             // Determinar la cantidad
@@ -6492,13 +6851,8 @@ export class SolicitudesService {
             solicitud.utilidad = utilidad;
             solicitud.porcentaje_utilidad = porcentaje_utilidad;
 
-            // Actualizar estado contable si aplica
-            if (solicitud.valor_cancelado > 0 && solicitud.valor_a_facturar > 0) {
-                const currentStatus = (solicitud as any).accounting_status;
-                if (!currentStatus || currentStatus === "no_iniciado") {
-                    (solicitud as any).accounting_status = "pendiente_operacional";
-                }
-            }
+            // Actualizar accounting_status basándose en contratos
+            this.actualizar_accounting_status_por_contratos(solicitud);
 
             await solicitud.save();
 
@@ -6710,6 +7064,9 @@ export class SolicitudesService {
 
             solicitud.utilidad = utilidad;
             solicitud.porcentaje_utilidad = porcentaje_utilidad;
+
+            // Actualizar accounting_status basándose en contratos
+            this.actualizar_accounting_status_por_contratos(solicitud);
 
             await solicitud.save();
 

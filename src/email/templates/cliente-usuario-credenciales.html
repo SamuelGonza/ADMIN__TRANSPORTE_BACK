@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verificación de Cuenta - Admin Transporte</title>
+    <title>Credenciales de Acceso - Admin Transporte</title>
     <style>
         * {
             margin: 0;
@@ -20,12 +20,6 @@
             max-width: 600px;
             margin: 0 auto;
             background-color: #ffffff;
-        }
-              .header {
-            background-color: rgba(22, 63, 95, 0.95);
-            padding: 30px 20px;
-            text-align: center;
-            color: white;
         }
         .logo {
             color: #ffffff;
@@ -48,29 +42,30 @@
             margin-bottom: 30px;
             line-height: 1.8;
         }
-        .otp-box {
+        .credentials-box {
             background-color: #f8f9fa;
-            border: 2px dashed rgba(22, 63, 95, 0.95);
-            padding: 30px;
+            border-left: 4px solid rgba(22, 63, 95, 0.95);
+            padding: 20px;
             margin: 30px 0;
-            border-radius: 8px;
-            text-align: center;
+            border-radius: 4px;
         }
-        .otp-label {
+        .credential-item {
+            margin-bottom: 15px;
+        }
+        .credential-label {
             font-weight: 600;
             color: #333333;
             font-size: 14px;
-            margin-bottom: 15px;
+            margin-bottom: 5px;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
         }
-        .otp-code {
-            font-size: 36px;
+        .credential-value {
+            font-size: 16px;
             color: rgba(22, 63, 95, 0.95);
-            font-weight: bold;
+            font-weight: 600;
             font-family: 'Courier New', monospace;
-            letter-spacing: 5px;
-            margin: 10px 0;
+            word-break: break-all;
         }
         .warning {
             background-color: #fff3cd;
@@ -81,7 +76,7 @@
             font-size: 14px;
             color: #856404;
         }
-       .footer {
+        .footer {
             background-color: rgba(22, 63, 95, 0.95);
             padding: 30px 20px;
             text-align: center;
@@ -98,46 +93,57 @@
         .footer-link:hover {
             text-decoration: underline;
         }
-                             .logo-tecnotics {
-        filter: invert(1) grayscale(1);
-        width: 20%;
-      }
-                  .logo-admin-transporte {
-        width: 60%;
-
-      }
+        .logo-admin-transporte {
+            width: 60%;
+        }
+        .logo-tecnotics {
+            filter: invert(1) grayscale(1);
+            width: 20%;
+        }
+        .header {
+            background-color: rgba(22, 63, 95, 0.95);
+            padding: 30px 20px;
+            text-align: center;
+            color: white;
+        }
     </style>
 </head>
 <body>
     <div class="email-container">
       <div class="header">
-                            <div class="logo"><img class="logo-admin-transporte" 
-             src="https://res.cloudinary.com/appsftw/image/upload/v1769031962/zgfbgd6zwwv86z3px8uc.png" 
-             alt="TecnoTics · Soluciones corporativas">
-    </a></div>
+        <div class="logo">
+            <img class="logo-admin-transporte" 
+                 src="https://res.cloudinary.com/appsftw/image/upload/v1769031962/zgfbgd6zwwv86z3px8uc.png" 
+                 alt="Admin Transporte">
+        </div>
       </div>
-        
         <div class="content">
             <div class="greeting">¡Hola {{full_name}}!</div>
             
             <div class="message">
-                Bienvenido a <strong>Admin Transporte</strong>. Para completar el proceso de registro y activar tu cuenta, necesitamos verificar tu identidad.
+                Has sido registrado como <strong>subusuario</strong> de <strong>{{client_name}}</strong> en <strong>Admin Transporte</strong>. 
+                Tu cuenta ha sido creada exitosamente y ya puedes comenzar a gestionar solicitudes a nombre del cliente.
             </div>
             
-            <div class="otp-box">
-                <div class="otp-label">Código de Verificación</div>
-                <div class="otp-code">{{otp_code}}</div>
-                <div style="font-size: 12px; color: #666; margin-top: 10px;">
-                    Este código expirará en breve. Úsalo solo una vez.
+            <div class="credentials-box">
+                <div class="credential-item">
+                    <div class="credential-label">Correo Electrónico</div>
+                    <div class="credential-value">{{email}}</div>
+                </div>
+                <div class="credential-item">
+                    <div class="credential-label">Contraseña de Acceso</div>
+                    <div class="credential-value">{{password}}</div>
                 </div>
             </div>
             
             <div class="warning">
-                <strong>Importante:</strong> Por seguridad, no compartas este código con nadie. Si no solicitaste este código, ignora este mensaje.
+                <strong>Importante:</strong> Esta contraseña es permanente y no puede ser cambiada. 
+                Guarda estas credenciales en un lugar seguro.
             </div>
             
             <div class="message">
-                Ingresa este código en la plataforma para verificar tu cuenta. Una vez verificada, recibirás tus credenciales de acceso.
+                Puedes iniciar sesión usando el mismo sistema de login de clientes. 
+                Si tienes alguna pregunta o necesitas asistencia, no dudes en contactarnos.
             </div>
         </div>
         
@@ -145,29 +151,17 @@
             <div class="footer-text">
                 © {{year}} AdminTransporte. Todos los derechos reservados.
             </div>
-<div class="footer-text">
-    Desarrollado por
-</div>
-<div class="footer-text">
-    <a href="https://tecnotics.com" class="footer-link">
-        <img class="logo-tecnotics" 
-             src="https://res.cloudinary.com/appsftw/image/upload/v1756413778/nfhy5s2aniujveaurx8v.png" 
-             alt="TecnoTics · Soluciones corporativas">
-    </a>
-</div>
-
+            <div class="footer-text">
+                Desarrollado por
+            </div>
+            <div class="footer-text">
+                <a href="https://tecnotics.com" class="footer-link">
+                    <img class="logo-tecnotics" 
+                         src="https://res.cloudinary.com/appsftw/image/upload/v1756413778/nfhy5s2aniujveaurx8v.png" 
+                         alt="TecnoTics · Soluciones corporativas">
+                </a>
+            </div>
         </div>
     </div>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-

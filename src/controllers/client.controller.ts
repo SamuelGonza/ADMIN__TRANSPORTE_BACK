@@ -206,11 +206,33 @@ export class ClientController {
                 return;
             }
 
-            const response = await this.clientService.get_client_by_id({ id: user._id });
-            res.status(200).json({
-                message: "Sesión válida",
-                data: response
-            });
+            // Intentar obtener como cliente normal primero
+            try {
+                const response = await this.clientService.get_client_by_id({ id: user._id });
+                res.status(200).json({
+                    message: "Sesión válida",
+                    data: {
+                        ...response,
+                        is_client_user: false
+                    }
+                });
+            } catch (error) {
+                // Si no se encuentra como cliente, intentar como client_user
+                if (error instanceof ResponseError && error.statusCode === 404) {
+                    const { ClientUserService } = await import("@/services/client_user.service");
+                    const clientUserService = new ClientUserService();
+                    const response = await clientUserService.get_client_user_by_id({ id: user._id });
+                    res.status(200).json({
+                        message: "Sesión válida",
+                        data: {
+                            ...response,
+                            is_client_user: true
+                        }
+                    });
+                } else {
+                    throw error;
+                }
+            }
         } catch (error) {
             if(error instanceof ResponseError){
                 res.status(error.statusCode).json({
@@ -238,8 +260,23 @@ export class ClientController {
                 return;
             }
 
-            // Obtener datos actualizados del cliente
-            const clientData = await this.clientService.get_client_by_id({ id: user._id });
+            // Intentar obtener como cliente normal primero
+            let clientData: any;
+            let isClientUser = false;
+            
+            try {
+                clientData = await this.clientService.get_client_by_id({ id: user._id });
+            } catch (error) {
+                // Si no se encuentra como cliente, intentar como client_user
+                if (error instanceof ResponseError && error.statusCode === 404) {
+                    const { ClientUserService } = await import("@/services/client_user.service");
+                    const clientUserService = new ClientUserService();
+                    clientData = await clientUserService.get_client_user_by_id({ id: user._id });
+                    isClientUser = true;
+                } else {
+                    throw error;
+                }
+            }
             
             // Extraer company_id correctamente (puede ser ObjectId, string, o objeto populado)
             let clientCompanyId: string | undefined;
@@ -283,7 +320,10 @@ export class ClientController {
                 message: "Sesión renovada exitosamente",
                 data: {
                     token: newToken,
-                    client: clientData
+                    client: {
+                        ...clientData,
+                        is_client_user: isClientUser
+                    }
                 }
             });
         } catch (error) {

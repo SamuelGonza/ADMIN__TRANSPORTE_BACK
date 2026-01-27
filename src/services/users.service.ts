@@ -8,6 +8,7 @@ import { compare_password, generate_numbers, generate_password, generate_token_s
 import { delete_media, upload_media } from '@/utils/cloudinary';
 import { DEFAULT_PROFILE } from '@/utils/constants';
 import { send_user_credentials, send_user_verification_otp, send_user_password_reset_otp } from '@/email/index.email';
+import EmailQueue, { EmailJobType } from '@/queues/email.queue';
 import fs from "fs";
 import path from "path";
 import dayjs from "dayjs";
@@ -80,17 +81,18 @@ export class UserService {
                 await new_driver_documents.save()
             }
 
-            // Enviar credenciales via email
+            // Enviar credenciales via email (en segundo plano)
+            const emailQueue = EmailQueue.getInstance();
             if (is_new_company) {
                 // Enviar email de solicitud de verificacion de cuenta con el codigo otp
-                await send_user_verification_otp({
+                await emailQueue.addJob(EmailJobType.SEND_USER_VERIFICATION_OTP, {
                     full_name,
                     email,
                     otp_code: generated_otp.toString()
                 });
             } else {
                 // Enviar credenciales de inicio de sesion
-                await send_user_credentials({
+                await emailQueue.addJob(EmailJobType.SEND_USER_CREDENTIALS, {
                     full_name,
                     email,
                     password: plane_random_password,
@@ -766,6 +768,25 @@ export class UserService {
 
             const fmtDate = (d: any) => (d ? dayjs(d).format("DD/MM/YYYY") : "");
 
+            // Obtener URLs de las imágenes de documentos
+            const cedulaFrontUrl = (docs as any)?.document?.front?.url || "";
+            const cedulaBackUrl = (docs as any)?.document?.back?.url || "";
+            const licenciaFrontUrl = (docs as any)?.licencia_conduccion?.front?.url || "";
+            const licenciaBackUrl = (docs as any)?.licencia_conduccion?.back?.url || "";
+
+            // Generar HTML para las imágenes (con fallback si no hay URL)
+            const generateImageHtml = (url: string, alt: string) => {
+                if (url) {
+                    return `<img src="${url}" alt="${alt}" style="max-width: 300px; max-height: 200px; object-fit: contain;" />`;
+                }
+                return `<span class="small">No disponible</span>`;
+            };
+
+            const cedulaFrontHtml = generateImageHtml(cedulaFrontUrl, "Cédula Frente");
+            const cedulaBackHtml = generateImageHtml(cedulaBackUrl, "Cédula Reverso");
+            const licenciaFrontHtml = generateImageHtml(licenciaFrontUrl, "Licencia Frente");
+            const licenciaBackHtml = generateImageHtml(licenciaBackUrl, "Licencia Reverso");
+
             const htmlTemplate = fs.readFileSync(this.resolveTemplatePath("ficha-tecnica-conductor.html"), "utf8");
             const html = this.replaceVariables(htmlTemplate, {
                 fecha_expedicion: fechaExpedicion,
@@ -794,8 +815,10 @@ export class UserService {
                 ciudad: (docs as any).ciudad || "",
                 email_personal: (docs as any).email_personal || "",
 
-                cedula_images: "",
-                licencia_images: "",
+                cedula_front_html: cedulaFrontHtml,
+                cedula_back_html: cedulaBackHtml,
+                licencia_front_html: licenciaFrontHtml,
+                licencia_back_html: licenciaBackHtml,
             });
 
             const pdfBuffer = await renderHtmlToPdfBuffer(html);

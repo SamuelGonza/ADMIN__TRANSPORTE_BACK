@@ -123,7 +123,7 @@ export interface BitacoraSolicitud extends Document {
     contract_charge_amount?: number;
 
     // Flujo de contabilidad
-    accounting_status?: "no_iniciado" | "pendiente_operacional" | "operacional_completo" | "prefactura_pendiente" | "prefactura_aprobada" | "listo_para_facturacion" | "facturado" | "listo_para_liquidar"; // Estado del flujo de contabilidad
+    accounting_status?: "no_iniciado" | "faltan_ventas" | "faltan_costos" | "pendiente_operacional" | "operacional_completo" | "prefactura_pendiente" | "prefactura_aprobada" | "esperando_aprobacion_cliente" | "listo_para_facturacion" | "facturado" | "listo_para_liquidar"; // Estado del flujo de contabilidad
     prefactura?: {
         numero?: string;
         fecha?: Date;

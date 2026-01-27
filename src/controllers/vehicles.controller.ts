@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { VehicleServices } from "@/services/vehicles.service";
 import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
+import dayjs from "dayjs";
 
 export class VehiclesController {
     private vehicleServices = new VehicleServices();
@@ -261,6 +262,57 @@ export class VehiclesController {
             res.status(500).json({
                 ok: false,
                 message: "Error al obtener vehículos"
+            });
+            return;
+        }
+    }
+
+    /**
+     * Exportar vehículos a Excel
+     * Puede exportar todos, filtrar por tipo/flota, o exportar vehículos seleccionados
+     */
+    public async export_vehicles_to_excel(req: Request, res: Response) {
+        try {
+            const { vehicle_ids, type, flota, placa, name } = req.query;
+
+            const filters: any = {};
+            if (type) filters.type = type;
+            if (flota) filters.flota = flota;
+            if (placa) filters.placa = placa as string;
+            if (name) filters.name = name as string;
+
+            // Si se proporcionan IDs específicos, convertir a array
+            let vehicleIdsArray: string[] | undefined;
+            if (vehicle_ids) {
+                if (typeof vehicle_ids === 'string') {
+                    vehicleIdsArray = vehicle_ids.split(',').map(id => id.trim());
+                } else if (Array.isArray(vehicle_ids)) {
+                    vehicleIdsArray = vehicle_ids.map(id => String(id).trim());
+                }
+            }
+
+            const excelBuffer = await this.vehicleServices.export_vehicles_to_excel({
+                vehicle_ids: vehicleIdsArray,
+                filters
+            });
+
+            const filename = `vehiculos-${dayjs().format("YYYYMMDD_HHmm")}.xlsx`;
+
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(excelBuffer);
+        } catch (error) {
+            console.error("Error al exportar vehículos:", error);
+            if (error instanceof ResponseError) {
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al exportar vehículos a Excel"
             });
             return;
         }

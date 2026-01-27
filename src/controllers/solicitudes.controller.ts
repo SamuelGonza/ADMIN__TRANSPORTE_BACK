@@ -11,11 +11,30 @@ export class SolicitudesController {
     public async create_solicitud_client(req: Request, res: Response) {
         try {
             const { client_id, ...payload } = req.body;
-            // Client should be the authenticated user
             const user_id = (req as AuthRequest).user?._id;
             
+            // Verificar si el usuario autenticado es un client_user
+            let final_client_id = user_id || client_id;
+            
+            try {
+                // Intentar obtener como client_user
+                const { ClientUserService } = await import("@/services/client_user.service");
+                const clientUserService = new ClientUserService();
+                const clientUser = await clientUserService.get_client_user_by_id({ id: user_id! });
+                
+                if (clientUser && clientUser.cliente_id) {
+                    // Si es un client_user, usar el cliente_id del cliente asociado
+                    final_client_id = typeof clientUser.cliente_id === 'string' 
+                        ? clientUser.cliente_id 
+                        : (clientUser.cliente_id as any)?._id?.toString() || (clientUser.cliente_id as any)?.toString();
+                }
+            } catch (error) {
+                // Si no es client_user, continuar con el flujo normal
+                // El user_id ya está asignado como final_client_id
+            }
+            
             await this.solicitudesService.create_solicitud_by_client({ 
-                client_id: user_id || client_id, 
+                client_id: final_client_id, 
                 payload: payload as any 
             });
             res.status(201).json({ 
@@ -1126,6 +1145,83 @@ export class SolicitudesController {
     }
 
     /**
+     * Descargar PDF de prefactura (cliente)
+     * Valida que el cliente autenticado sea el cliente asociado a la solicitud
+     */
+    public async client_download_prefactura_pdf(req: Request, res: Response) {
+        try {
+            const { id } = req.params;
+            const client_id = (req as AuthRequest).user?._id;
+
+            if (!client_id) {
+                res.status(401).json({
+                    ok: false,
+                    message: "Cliente no autenticado"
+                });
+                return;
+            }
+
+            // Validar que el cliente tenga acceso a esta solicitud
+            const solicitud = await this.solicitudesService.get_solicitud_by_id({ id, user_role: "cliente" });
+            if (!solicitud) {
+                res.status(404).json({
+                    ok: false,
+                    message: "Solicitud no encontrada"
+                });
+                return;
+            }
+
+            // Validar que el cliente autenticado es el cliente asociado a la solicitud
+            if (String((solicitud as any).cliente?._id || (solicitud as any).cliente) !== String(client_id)) {
+                res.status(403).json({
+                    ok: false,
+                    message: "No tiene permiso para descargar esta prefactura. Solo el cliente asociado a la solicitud puede descargarla."
+                });
+                return;
+            }
+
+            // Validar que existe una prefactura generada
+            if (!(solicitud as any).prefactura?.numero) {
+                res.status(400).json({
+                    ok: false,
+                    message: "No existe una prefactura generada para esta solicitud"
+                });
+                return;
+            }
+
+            // Validar que la prefactura haya sido enviada al cliente
+            if (!(solicitud as any).prefactura?.enviada_al_cliente) {
+                res.status(400).json({
+                    ok: false,
+                    message: "La prefactura aún no ha sido enviada al cliente"
+                });
+                return;
+            }
+
+            const { filename, buffer } = await this.solicitudesService.generate_prefactura_pdf({
+                solicitud_id: id
+            });
+
+            res.setHeader("Content-Type", "application/pdf");
+            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            res.status(200).send(buffer);
+        } catch (error) {
+            if(error instanceof ResponseError){
+                res.status(error.statusCode).json({
+                    ok: false,
+                    message: error.message
+                });
+                return;
+            }
+            res.status(500).json({
+                ok: false,
+                message: "Error al generar el PDF de prefactura"
+            });
+            return;
+        }
+    }
+
+    /**
      * Reenviar correos a los conductores asignados
      */
     public async resend_emails_to_drivers(req: Request, res: Response) {
@@ -1495,6 +1591,7 @@ export class SolicitudesController {
             const { 
                 contract_id, 
                 pricing_mode, 
+                tarifa,
                 cantidad, 
                 valor_manual, 
                 usar_valor_manual, 
@@ -1535,6 +1632,7 @@ export class SolicitudesController {
                 payload: {
                     contract_id,
                     pricing_mode,
+                    tarifa: tarifa !== undefined ? Number(tarifa) : undefined,
                     cantidad: cantidad !== undefined ? Number(cantidad) : undefined,
                     valor_manual: valor_manual !== undefined ? Number(valor_manual) : undefined,
                     usar_valor_manual,
