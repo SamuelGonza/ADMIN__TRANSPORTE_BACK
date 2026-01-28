@@ -1,6 +1,6 @@
 import { Document, ObjectId } from "mongoose";
 
-export type ContractType = "fijo" | "ocasional"; // Contratos fijos con presupuesto o contratos ocasionales sin presupuesto
+export type ContractType = "fijo" | "ocasional" | "licitacion"; // Contratos fijos con presupuesto, contratos ocasionales sin presupuesto, o licitaciones (funcionan igual que fijo)
 export type ContractBudgetPeriod = "anio" | "mes" | "semana" | "dia";
 export type ContractHistoryEventType = "budget_set" | "service_charge" | "manual_adjust";
 export type ContractPricingMode = "por_hora" | "por_kilometro" | "por_distancia" | "por_viaje" | "por_trayecto";
@@ -45,6 +45,8 @@ export interface Contract extends Document {
     valor_consumido: number;
 
     historico: ContractHistoryEvent[];
+
+    fecha_final?: Date; // Fecha de finalización del contrato (opcional)
 
     is_active: boolean;
     created: Date;

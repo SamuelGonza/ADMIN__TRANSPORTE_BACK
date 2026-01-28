@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { VehicleServices } from "@/services/vehicles.service";
 import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
+import cacheService from "@/utils/cache";
 import dayjs from "dayjs";
 
 export class VehiclesController {
@@ -104,6 +105,10 @@ export class VehiclesController {
                 company_id: user_company_id || company_id, 
                 picture: picture as any 
             });
+            
+            // Invalidar caché de vehículos
+            await cacheService.invalidateVehiclesCache();
+            
             res.status(201).json({ 
                 message: "Vehículo creado exitosamente"
             });
@@ -440,6 +445,10 @@ export class VehiclesController {
             if (!picture) throw new Error("No image uploaded");
 
             await this.vehicleServices.update_vehicle_picture({ id, picture });
+            
+            // Invalidar caché de vehículos (específico y general)
+            await cacheService.invalidateVehiclesCache(id);
+            
             res.status(200).json({ 
                 message: "Imagen del vehículo actualizada"
             });

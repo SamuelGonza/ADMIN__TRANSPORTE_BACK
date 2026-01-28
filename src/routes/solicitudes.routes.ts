@@ -50,6 +50,7 @@ const solicitudesController = new SolicitudesController();
  *               requested_passengers: { type: number, description: "Opcional: pasajeros solicitados (multi-vehículo)" }
  *               estimated_km: { type: number, description: "Opcional: kilómetros estimados" }
  *               estimated_hours: { type: number, description: "Opcional: horas estimadas" }
+ *               centro_costos: { type: string, description: "Opcional: centro de costos" }
  *             required: [fecha, hora_inicio, origen, destino, n_pasajeros]
  *     responses:
  *       201:
@@ -97,6 +98,7 @@ router.post("/client", ClienteAuth, solicitudesController.create_solicitud_clien
  *               estimated_km: { type: number }
  *               estimated_hours: { type: number }
  *               pricing_mode: { type: string, enum: [por_hora, por_kilometro, por_distancia, tarifa_amva, por_viaje, por_trayecto] }
+ *               centro_costos: { type: string, description: "Opcional: centro de costos" }
  *             required: [bitacora_id, cliente_id, empresa, fecha, hora_inicio, origen, destino, n_pasajeros, placa]
  *     responses:
  *       201:

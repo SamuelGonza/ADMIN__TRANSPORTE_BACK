@@ -412,6 +412,7 @@ export class SolicitudesService {
             estimated_hours?: number,
             observaciones_cliente?: string, // Observaciones exclusivas del cliente
             empresa?: string, // Empresa seleccionada (para el consecutivo HE)
+            centro_costos?: string, // Centro de costos (opcional)
         }
     }) {
         try {
@@ -492,6 +493,7 @@ export class SolicitudesService {
                 estimated_km: payload.estimated_km,
                 estimated_hours: payload.estimated_hours,
                 observaciones_cliente: payload.observaciones_cliente,
+                centro_costos: payload.centro_costos,
 
                 // Datos del cliente (auto-rellenados, pero el cliente puede cambiar contacto y contacto_phone)
                 cliente: client_id,
@@ -615,6 +617,7 @@ export class SolicitudesService {
             contract_charge_mode?: "within_contract" | "outside_contract" | "no_contract",
             contract_charge_amount?: number,
             pricing_mode?: "por_hora" | "por_kilometro" | "por_distancia" | "tarifa_amva" | "por_viaje" | "por_trayecto",
+            centro_costos?: string, // Centro de costos (opcional)
         }
     }) {
         try {
@@ -806,6 +809,7 @@ export class SolicitudesService {
                 pricing_mode,
                 pricing_rate,
                 estimated_price,
+                centro_costos: payload.centro_costos,
 
                 // Cliente
                 cliente: payload.cliente_id,

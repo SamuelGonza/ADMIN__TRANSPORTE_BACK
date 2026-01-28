@@ -111,6 +111,9 @@ export interface BitacoraSolicitud extends Document {
     factura_id?: ObjectId; // Referencia a la colección Facturas (si se genera por el sistema)
     preliquidaciones?: ObjectId[]; // Referencias a las preliquidaciones
 
+    // Centro de costos
+    centro_costos?: string; // Centro de costos (opcional pero siempre presente)
+
     // Utilidad
     utilidad: number; // UTILIDAD (valor)
     porcentaje_utilidad: number; // % (porcentaje de utilidad)

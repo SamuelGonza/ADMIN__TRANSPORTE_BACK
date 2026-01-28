@@ -25,6 +25,7 @@ export class ContractsService {
                 por_viaje?: number;
                 por_trayecto?: number;
             };
+            fecha_final?: Date;
             notes?: string;
         };
     }) {
@@ -33,13 +34,13 @@ export class ContractsService {
             if (!client) throw new ResponseError(404, "Cliente no encontrado");
             if (String(client.company_id) !== String(company_id)) throw new ResponseError(401, "El cliente no pertenece a tu empresa");
 
-            // Reglas: Los contratos fijos requieren presupuesto, los ocasionales no
-            if (payload.tipo_contrato === "fijo") {
+            // Reglas: Los contratos fijos y licitaciones requieren presupuesto, los ocasionales no
+            if (payload.tipo_contrato === "fijo" || payload.tipo_contrato === "licitacion") {
             if (payload.valor_presupuesto == null || Number.isNaN(payload.valor_presupuesto)) {
-                    throw new ResponseError(400, "valor_presupuesto es requerido para contratos fijos");
+                    throw new ResponseError(400, "valor_presupuesto es requerido para contratos fijos y licitaciones");
             }
             if (!payload.periodo_presupuesto) {
-                    throw new ResponseError(400, "periodo_presupuesto es requerido para contratos fijos");
+                    throw new ResponseError(400, "periodo_presupuesto es requerido para contratos fijos y licitaciones");
                 }
             } else if (payload.tipo_contrato === "ocasional") {
                 // Los contratos ocasionales no requieren presupuesto
@@ -56,6 +57,7 @@ export class ContractsService {
                 periodo_presupuesto: payload.periodo_presupuesto,
                 valor_presupuesto: payload.valor_presupuesto,
                 valor_consumido: 0,
+                fecha_final: payload.fecha_final || undefined,
                 created_by: created_by || undefined,
                 historico: [
                     {
@@ -167,6 +169,7 @@ export class ContractsService {
                 por_viaje?: number;
                 por_trayecto?: number;
             };
+            fecha_final?: Date;
             is_active: boolean;
             notes: string;
         }>;
@@ -184,6 +187,7 @@ export class ContractsService {
             if (payload.periodo_presupuesto) contrato.periodo_presupuesto = payload.periodo_presupuesto;
             if (payload.valor_presupuesto !== undefined) contrato.valor_presupuesto = payload.valor_presupuesto;
             if (payload.cobro !== undefined) (contrato as any).cobro = payload.cobro;
+            if (payload.fecha_final !== undefined) (contrato as any).fecha_final = payload.fecha_final;
             if (payload.is_active !== undefined) contrato.is_active = payload.is_active;
 
             // Si se tocó presupuesto, dejamos rastro

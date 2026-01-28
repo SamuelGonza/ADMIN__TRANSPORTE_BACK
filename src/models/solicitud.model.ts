@@ -144,6 +144,9 @@ const SolicitudSchema: Schema = new Schema<BitacoraSolicitud>({
         default: []
     }, // Referencias a las preliquidaciones
 
+    // Centro de costos
+    centro_costos: { type: String, required: false }, // Centro de costos (opcional pero siempre presente)
+
     // Utilidad
     utilidad: { type: Number, required: true, default: 0 }, // UTILIDAD (valor)
     porcentaje_utilidad: { type: Number, required: true, default: 0 }, // % (porcentaje de utilidad)

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { SolicitudesService } from "@/services/solicitudes.service";
 import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
+import cacheService from "@/utils/cache";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -66,6 +67,10 @@ export class SolicitudesController {
                 coordinator_id: user_id || coordinator_id, 
                 payload: payload as any 
             });
+            
+            // Invalidar caché de solicitudes
+            await cacheService.invalidateSolicitudesCache();
+            
             res.status(201).json({ 
                 message: "Solicitud creada y aprobada exitosamente"
             });
@@ -324,6 +329,9 @@ export class SolicitudesController {
                 payload
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 message: "Contabilidad del bus actualizada correctamente",
                 data: response
@@ -348,6 +356,10 @@ export class SolicitudesController {
         try {
             const { id } = req.params;
             const response = await this.solicitudesService.reject_solicitud({ solicitud_id: id });
+            
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+            
             res.status(200).json({
                 message: "Solicitud rechazada correctamente",
                 data: response
@@ -403,6 +415,10 @@ export class SolicitudesController {
             const { id } = req.params;
             const payload = req.body;
             const response = await this.solicitudesService.finish_service({ solicitud_id: id, payload });
+            
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+            
             res.status(200).json({
                 message: "Servicio finalizado correctamente",
                 data: response
@@ -582,6 +598,9 @@ export class SolicitudesController {
                 }
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 message: "Valores de venta y contrato establecidos correctamente",
                 data: response
@@ -623,6 +642,9 @@ export class SolicitudesController {
                     valor_cancelado: Number(valor_cancelado)
                 }
             });
+
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
 
             res.status(200).json({
                 message: "Valores de costos establecidos correctamente",
@@ -870,6 +892,9 @@ export class SolicitudesController {
                 user_id: user_id as string
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 message: "Prefactura generada exitosamente",
                 data: response
@@ -912,6 +937,11 @@ export class SolicitudesController {
                 user_id: user_id as string
             });
 
+            // Invalidar caché de todas las solicitudes afectadas
+            for (const solicitudId of solicitud_ids) {
+                await cacheService.invalidateSolicitudesCache(solicitudId);
+            }
+
             res.status(200).json({
                 message: response.message || "Prefactura generada exitosamente",
                 data: response
@@ -948,6 +978,9 @@ export class SolicitudesController {
                 reenviar: reenviar === true
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 message: response.message || "Prefactura aprobada exitosamente",
                 data: response
@@ -982,6 +1015,9 @@ export class SolicitudesController {
                 user_id: user_id as string,
                 notas
             });
+
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
 
             res.status(200).json({
                 message: "Prefactura rechazada",
@@ -1094,6 +1130,9 @@ export class SolicitudesController {
                 status: status as "aceptada" | "rechazada",
                 notas
             });
+
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
 
             res.status(200).json({
                 success: true,
@@ -1510,6 +1549,9 @@ export class SolicitudesController {
                 notas
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 ok: true,
                 message: response.message,
@@ -1560,6 +1602,9 @@ export class SolicitudesController {
                     kilometros_reales: kilometros_reales !== undefined ? Number(kilometros_reales) : undefined
                 }
             });
+
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
 
             res.status(200).json({
                 ok: true,
@@ -1642,6 +1687,9 @@ export class SolicitudesController {
                 }
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 ok: true,
                 message: response.message,
@@ -1682,6 +1730,9 @@ export class SolicitudesController {
                 solicitud_id: id,
                 user_id: user_id as string
             });
+
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
 
             res.status(200).json({
                 ok: true,
@@ -1759,6 +1810,9 @@ export class SolicitudesController {
                 }
             });
 
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
+
             res.status(200).json({
                 ok: true,
                 message: response.message,
@@ -1799,6 +1853,9 @@ export class SolicitudesController {
                 solicitud_id: id,
                 user_id: user_id as string
             });
+
+            // Invalidar caché de solicitudes (específica y general)
+            await cacheService.invalidateSolicitudesCache(id);
 
             res.status(200).json({
                 ok: true,

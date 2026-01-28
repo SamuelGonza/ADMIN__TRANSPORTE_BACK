@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { UserService } from "@/services/users.service";
 import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
+import cacheService from "@/utils/cache";
 
 export class UsersController {
     private userService = new UserService();
@@ -32,6 +33,10 @@ export class UsersController {
                 skip_company_validation: req.body.skip_company_validation,
                 is_new_company: req.body.is_new_company || false
             });
+            
+            // Invalidar caché de usuarios
+            await cacheService.invalidateUsersCache();
+            
             res.status(201).json({
                 message: "Usuario registrado exitosamente"
             });
@@ -383,6 +388,10 @@ export class UsersController {
             const { id } = req.params;
             const { full_name, contact } = req.body;
             await this.userService.update_user_info({ full_name, contact, id });
+            
+            // Invalidar caché de usuarios (específico y general)
+            await cacheService.invalidateUsersCache(id);
+            
             res.status(200).json({
                 message: "Información del usuario actualizada"
             });
@@ -409,6 +418,10 @@ export class UsersController {
             if (!file) throw new Error("No image uploaded");
 
             await this.userService.update_user_avatar({ new_avatar: file, id });
+            
+            // Invalidar caché de usuarios (específico y general)
+            await cacheService.invalidateUsersCache(id);
+            
             res.status(200).json({
                 message: "Avatar actualizado correctamente"
             });
@@ -675,6 +688,10 @@ export class UsersController {
         try {
             const { id } = req.params;
             await this.userService.delete_user({ user_id: id });
+            
+            // Invalidar caché de usuarios (específico y general)
+            await cacheService.invalidateUsersCache(id);
+            
             res.status(200).json({
                 message: "Usuario eliminado correctamente"
             });

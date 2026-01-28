@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { ClientService } from "@/services/client.service";
 import { ResponseError } from "@/utils/errors";
 import { AuthRequest } from "@/utils/express";
+import cacheService from "@/utils/cache";
 
 export class ClientController {
     private clientService = new ClientService();
@@ -151,6 +152,10 @@ export class ClientController {
             const { id } = req.params;
             const payload = req.body;
             await this.clientService.update_client_info({ id, payload });
+            
+            // Invalidar caché de clientes (específico y general)
+            await cacheService.invalidateClientsCache(id);
+            
             res.status(200).json({ 
                 message: "Información del cliente actualizada"
             });
